@@ -1,0 +1,32 @@
+
+1. Python 3.11+. it is good for AI ecosystem
+
+2. LLM: Gemini 2.5
+
+3. Agent framework: Google ADK
+
+4. Data Validation: Pydantic
+
+5. External APIs: Google Maps, weather API
+
+
+Question1: What is Google ADK, and why do we need it?
+
+Google ADK is an open-source framework built by Google to
+help developers build, test, and deploy AI agents.
+
+---------------------------------------------------------------
+
+1. Director_agent:
+
+- User inputs, a script
+
+- The script analyze the script, extract key words related to places, weather, 
+
+
+2. the data retrieved from the director agent should be in JSON format.
+
+
+=================================================================
+29/7/2026:
+Building the extraction agent, add a critique loop on top of it
