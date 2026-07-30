@@ -8,7 +8,7 @@ from typing import List, Optional
 #It tells Python what kind of data a variable should contain.
 #Optional means one value may exist, or it may be None.
 #=========================================================================
-from google.adk.agents import Agent, LlmAgent
+from google.adk.agents import LlmAgent
 #ADK stands for Agent Development Kit, it is a framework of building AI agents
 
 
@@ -58,6 +58,8 @@ Screenplay:
 {script_text}
 """
 
+class Script_Rubric(BaseModel):
+    Scenes: List[Scene]
 
 #=======================================================================================
 director_agent = LlmAgent(
@@ -65,7 +67,7 @@ director_agent = LlmAgent(
     #It warps an LLM call into a reusable "agent" object.
     name="director_agent", # An identifer for this agent
     model="gemini-2.5-pro",
-    instruction= Extraction_Instruction,
-    output_schema=Scene,
+    instruction= EXTRACTION_INSTRUCTION,
+    output_schema=Script_Rubric,
     output_key= "extracted_data"#It tells the ADK framework where to save the LLM's final validated response
     )

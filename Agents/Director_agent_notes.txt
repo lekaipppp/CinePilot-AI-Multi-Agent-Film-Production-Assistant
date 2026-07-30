@@ -23,6 +23,10 @@ help developers build, test, and deploy AI agents.
 
 - The script analyze the script, extract key words related to places, weather, 
 
+- Able to read PDF, and extract the texts
+
+- Reflection process, we need to add a loop there.
+
 
 2. the data retrieved from the director agent should be in JSON format.
 
