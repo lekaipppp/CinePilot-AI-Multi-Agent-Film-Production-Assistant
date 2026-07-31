@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import NavBar from '../components/NavBar';
 import styles from './LandingPage.module.css';
 
 /* ── Data ────────────────────────────────────────────────────────────────── */
@@ -123,21 +124,7 @@ export default function LandingPage() {
     <div className={styles.page}>
 
       {/* NAV */}
-      <nav className={styles.nav}>
-        <Link to="/" className={styles.navBrand}>
-          <span className={styles.navLogo}>🎬</span>
-          <span className={styles.navTitle}>CinePilot AI</span>
-        </Link>
-        <ul className={styles.navLinks}>
-          <li><a href="#agents">Agents</a></li>
-          <li><a href="#how">How it works</a></li>
-          <li>
-            <Link to="/upload" className={styles.navCta}>
-              Upload Screenplay
-            </Link>
-          </li>
-        </ul>
-      </nav>
+      <NavBar />
 
       {/* HERO */}
       <section className={styles.hero}>

@@ -1,9 +1,5 @@
-function Upload() {
-  return (
-    <div>
-      <h1>Upload Screenplay</h1>
-    </div>
-  );
-}
+import UploadPage from './UploadPage';
 
-export default Upload;
+export default function Upload() {
+  return <UploadPage />;
+}
