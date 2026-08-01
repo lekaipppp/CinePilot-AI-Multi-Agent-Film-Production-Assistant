@@ -1,10 +1,8 @@
-<<<<<<< HEAD
+
 # CinePilot AI 🎬
 ### Multi-Agent Film Production Assistant
 
 > A production-ready FastAPI backend that orchestrates a team of AI agents powered by **Gemini** and **LangGraph** to automate every stage of film pre-production — from script generation to location scouting, weather analysis, scheduling, and budgeting.
-
----
 
 ## Table of Contents
 
@@ -18,7 +16,6 @@
 8. [Environment Variables](#environment-variables)
 9. [Contributing](#contributing)
 
----
 
 ## Tech Stack
 
@@ -36,7 +33,6 @@
 | Weather Data | OpenWeather API |
 | HTTP Client | httpx (async) |
 
----
 
 ## Project Structure
 
@@ -417,9 +413,6 @@ npm run dev
 >>>>>>> bacc3b92614d44e6d82a2105ddca91129355f36c
 ```
 
----
-
-<<<<<<< HEAD
 ## Environment Variables
 
 See [`.env.example`](.env.example) for the full list. Key variables:
@@ -435,7 +428,6 @@ See [`.env.example`](.env.example) for the full list. Key variables:
 | `SECRET_KEY` | App secret for token signing |
 | `DEBUG` | `true` enables SQL echo + DEBUG logs |
 
----
 
 ## Contributing
 
@@ -443,7 +435,6 @@ See [`.env.example`](.env.example) for the full list. Key variables:
 2. Make changes and run `pytest` to validate
 3. Open a pull request with a clear description
 
----
 
 *Built for the CinePilot AI Hackathon — powered by Gemini + LangGraph*
 =======
@@ -456,13 +447,9 @@ Contributions, feature requests, and suggestions are welcome.
 3. Commit your changes
 4. Open a Pull Request
 
----
-
 ## 📜 License
 
 This project is licensed under the MIT License.
-
----
 
 ## ❤️ Acknowledgements
 
@@ -474,9 +461,6 @@ This project is licensed under the MIT License.
 - Devpost
 - Open Source Community
 
----
-
 ## ⭐ Support
 
 If you like this project, consider giving it a **⭐ Star** on GitHub!
->>>>>>> bacc3b92614d44e6d82a2105ddca91129355f36c
