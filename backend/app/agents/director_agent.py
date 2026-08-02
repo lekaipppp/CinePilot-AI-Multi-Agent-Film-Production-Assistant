@@ -9,11 +9,21 @@ from typing import List, Optional, Literal
 #Optional means one value may exist, or it may be None.
 #=========================================================================
 from google.adk.agents import LlmAgent
+from dotenv import load_dotenv
 
+
+'''
+1. V2: Add a critique agent to review the extracted data.
+2. script
+3. Extract text from the PDf and put into the agent.
+'''
+
+load_dotenv()
 
 class Scene(BaseModel):
     scene_number: int = Field(
         ge=1,
+        #Stands for greater than or equal to 1. It is a pydantic constant from Field.
         description="Sequential scene number assigned according to script order",
     )
 
@@ -21,7 +31,8 @@ class Scene(BaseModel):
         description="Original scene heading or slug line from the screenplay",
     )
 
-    location_setting: str = Field(
+    location_setting: Optional[str] = Field(
+        default=None,
         description=(
             "Concise description of the primary location, "
             "for example 'urban alley' or 'hospital operating room'"
@@ -71,6 +82,11 @@ class Scene(BaseModel):
             "night shoots, crowds, animals, minors, VFX, SFX, vehicles, "
             "or unusual equipment"
         ),
+    )
+
+    source_evidence: List[str] = Field(
+        default_factory=list,
+        description="Evidence from the source material supporting the scene details"
     )
 
 
@@ -124,6 +140,10 @@ Rules:
 
 11. Use null for unknown optional scalar values and empty lists when no
     characters, props, or requirements are identified.
+
+12. Every extracted character, prop, weather condition, and shooting
+    requirement must be supported by the screenplay. Include short supporting
+    excerpts in source_evidence. Never invent missing information.
 
 Return structured output matching the required schema.
 """

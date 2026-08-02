@@ -1,0 +1,8 @@
+Question 1: if the input script does not contain certain information, such as character... the LLM needs to able to write it by itslef or put None.
+
+Question 2: There is no place that the user can input the script.
+
+Question 3: Should we add a reflection process, I meant add a critique agent there to make sure the output made by the LLM is right.
+
+Question 4: In this project, users are allowed to upload file, what should I do to extract words from the pdf, and run them in this director agent.
+
