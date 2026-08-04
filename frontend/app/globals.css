@@ -1,0 +1,154 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* CinePilot AI — cinematic dark theme.
+   Palette: deep navy neutrals + electric blue primary + warm amber accent. */
+:root,
+.dark {
+  color-scheme: dark;
+  --radius: 0.75rem;
+
+  --background: oklch(0.181 0.021 259);
+  --foreground: oklch(0.968 0.005 259);
+
+  --card: oklch(0.226 0.024 259);
+  --card-foreground: oklch(0.968 0.005 259);
+  --popover: oklch(0.226 0.024 259);
+  --popover-foreground: oklch(0.968 0.005 259);
+
+  --primary: oklch(0.648 0.183 254);
+  --primary-foreground: oklch(0.15 0.03 259);
+
+  --secondary: oklch(0.278 0.026 259);
+  --secondary-foreground: oklch(0.95 0.008 259);
+
+  --muted: oklch(0.268 0.024 259);
+  --muted-foreground: oklch(0.703 0.024 259);
+
+  --accent: oklch(0.298 0.032 259);
+  --accent-foreground: oklch(0.968 0.005 259);
+
+  --amber: oklch(0.796 0.144 78);
+  --amber-foreground: oklch(0.19 0.03 259);
+
+  --success: oklch(0.723 0.135 168);
+  --warning: oklch(0.796 0.144 78);
+  --destructive: oklch(0.638 0.204 22);
+
+  --border: oklch(0.99 0 0 / 11%);
+  --input: oklch(0.99 0 0 / 15%);
+  --ring: oklch(0.648 0.183 254);
+
+  --chart-1: oklch(0.648 0.183 254);
+  --chart-2: oklch(0.796 0.144 78);
+  --chart-3: oklch(0.723 0.135 168);
+  --chart-4: oklch(0.52 0.13 262);
+  --chart-5: oklch(0.638 0.204 22);
+
+  --sidebar: oklch(0.201 0.023 259);
+  --sidebar-foreground: oklch(0.93 0.008 259);
+  --sidebar-primary: oklch(0.648 0.183 254);
+  --sidebar-primary-foreground: oklch(0.15 0.03 259);
+  --sidebar-accent: oklch(0.278 0.028 259);
+  --sidebar-accent-foreground: oklch(0.968 0.005 259);
+  --sidebar-border: oklch(0.99 0 0 / 10%);
+  --sidebar-ring: oklch(0.648 0.183 254);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@utility cine-glow {
+  background-image: radial-gradient(
+    120% 100% at 50% 0%,
+    color-mix(in oklab, var(--primary) 14%, transparent) 0%,
+    transparent 60%
+  );
+}
+
+@utility film-grid {
+  background-image: linear-gradient(
+      to right,
+      color-mix(in oklab, var(--foreground) 4%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--foreground) 4%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 44px 44px;
+}
+
+/* Leaflet dark surface tweaks */
+.leaflet-container {
+  background: oklch(0.181 0.021 259) !important;
+  font-family: var(--font-sans);
+}
+.leaflet-control-attribution,
+.leaflet-control-zoom a {
+  background: oklch(0.226 0.024 259) !important;
+  color: oklch(0.703 0.024 259) !important;
+  border-color: oklch(0.99 0 0 / 11%) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: oklch(0.278 0.026 259) !important;
+}
