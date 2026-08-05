@@ -2,7 +2,7 @@ from uuid import uuid4
 from backend.app.agents.director_agent import director_agent, ScriptRubric
 from google.genai.types import Content, Part
 #Used to create a Runner object
-from google.adk.agents import Runner
+from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
 APP_NAME = "cinepilot"
@@ -18,7 +18,7 @@ async def run_director_agent(
     if not screenplay_text:
         raise ValueError("Screenplay text is empty.")
     
-    session_id = uuid4()
+    session_id = str(uuid4())
 
     session_service = InMemorySessionService()
 
@@ -86,6 +86,9 @@ async def run_director_agent(
         # If it is already a ScriptRubric object, return it directly.
         if isinstance(extracted_data, ScriptRubric):
             return extracted_data
+
+        if isinstance(extracted_data, str):
+            return ScriptRubric.model_validate_json(extracted_data)
 
         # Otherwise, ask Pydantic to validate and convert the data.
         return ScriptRubric.model_validate(extracted_data)
