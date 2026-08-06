@@ -151,7 +151,7 @@ Return structured output matching the required schema.
 
 director_agent = LlmAgent(
     name="director_agent",
-    model="gemini-2.5-pro",
+    model="gemini-3.5-flash-lite",
     instruction=EXTRACTION_INSTRUCTION,
     output_schema=ScriptRubric,
     output_key="extracted_data",
