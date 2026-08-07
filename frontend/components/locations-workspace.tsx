@@ -1,353 +1,878 @@
 'use client'
 
 import * as React from 'react'
-import dynamic from 'next/dynamic'
-import Image from 'next/image'
 import {
-  Car,
-  Cloud,
-  CloudRain,
+  Building2,
+  ChevronLeft,
+  ChevronRight,
+  CircleDollarSign,
+  Crosshair,
   MapPin,
-  Ruler,
-  Sun,
-  Wind,
-  Thermometer,
-  Check,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
 } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+import { AnalysisGate } from '@/components/analysis-gate'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Slider } from '@/components/ui/slider'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Separator } from '@/components/ui/separator'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from '@/components/ui/field'
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { AnalysisGate } from '@/components/analysis-gate'
-import { LOCATIONS, formatCurrency, type LocationOption } from '@/lib/production-data'
-import { cn } from '@/lib/utils'
+import { Separator } from '@/components/ui/separator'
+import { Textarea } from '@/components/ui/textarea'
+import { useProduction } from '@/components/production-provider'
+import type { DirectorScene } from '@/lib/director-api'
 
-const LocationMap = dynamic(() => import('@/components/location-map'), {
-  ssr: false,
-  loading: () => <Skeleton className="size-full rounded-none" />,
-})
+type EnvironmentPreference =
+  | 'Interior'
+  | 'Exterior'
+  | 'Interior/Exterior'
+  | 'Either'
 
-const WEATHER_ICON = {
-  clear: Sun,
-  cloudy: Cloud,
-  rain: CloudRain,
-  wind: Wind,
-} as const
+type PermitPreference =
+  | 'any'
+  | 'permit-free-preferred'
+  | 'permit-free-required'
 
-const REGIONS = [
-  { value: 'all', label: 'All regions' },
-  { value: 'Death Valley, CA', label: 'Death Valley, CA' },
-  { value: 'Imperial County, CA', label: 'Imperial County, CA' },
-  { value: 'Independence, CA', label: 'Independence, CA' },
-  { value: 'Panamint Range, CA', label: 'Panamint Range, CA' },
-  { value: 'Amargosa Valley, NV', label: 'Amargosa Valley, NV' },
-]
+type SceneLocationRequirements = {
+  preferredRegion: string
+  maximumDayRate: string
+  currency: string
+  searchRadiusKm: string
+  environment: EnvironmentPreference
+  permitPreference: PermitPreference
+  practicalOrStudio: 'either' | 'practical' | 'studio'
+  filmingDate: string
+  additionalRequirements: string
+}
 
-export function LocationsWorkspace() {
-  const [region, setRegion] = React.useState('all')
-  const [maxCost, setMaxCost] = React.useState(6000)
-  const [indoor, setIndoor] = React.useState(true)
-  const [outdoor, setOutdoor] = React.useState(true)
-  const [weatherOnly, setWeatherOnly] = React.useState(false)
-  const [permitFree, setPermitFree] = React.useState(false)
-  const [selectedId, setSelectedId] = React.useState<string | null>(LOCATIONS[0].id)
+const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'CAD']
 
-  const filtered = LOCATIONS.filter((loc) => {
-    if (region !== 'all' && loc.region !== region) return false
-    if (loc.costPerDay > maxCost) return false
-    if (loc.environment === 'indoor' && !indoor) return false
-    if (loc.environment === 'outdoor' && !outdoor) return false
-    if (weatherOnly && !loc.weatherDependent) return false
-    if (permitFree && loc.permitRequired) return false
-    return true
-  })
+function createDefaultRequirements(
+  scene: DirectorScene,
+): SceneLocationRequirements {
+  const environment =
+    scene.interior_exterior === 'Unspecified'
+      ? 'Either'
+      : scene.interior_exterior
 
-  React.useEffect(() => {
-    if (filtered.length > 0 && !filtered.some((l) => l.id === selectedId)) {
-      setSelectedId(filtered[0].id)
-    }
-  }, [filtered, selectedId])
+  return {
+    preferredRegion: '',
+    maximumDayRate: '1500',
+    currency: 'EUR',
+    searchRadiusKm: '50',
+    environment,
+    permitPreference: 'any',
+    practicalOrStudio: 'either',
+    filmingDate: '',
+    additionalRequirements: '',
+  }
+}
 
-  const reset = () => {
-    setRegion('all')
-    setMaxCost(6000)
-    setIndoor(true)
-    setOutdoor(true)
-    setWeatherOnly(false)
-    setPermitFree(false)
+function getDetectedRequirements(scene: DirectorScene): string[] {
+  const requirements = [
+    scene.interior_exterior !== 'Unspecified'
+      ? scene.interior_exterior
+      : null,
+    scene.time_of_day,
+    scene.weather_of_scene,
+    ...scene.shooting_requirements,
+  ]
+
+  return Array.from(
+    new Set(
+      requirements.filter(
+        (requirement): requirement is string =>
+          Boolean(requirement?.trim()),
+      ),
+    ),
+  )
+}
+
+function getSceneLabel(scene: DirectorScene): string {
+  if (scene.location_setting) {
+    return `Scene ${scene.scene_number} · ${scene.location_setting}`
   }
 
+  return `Scene ${scene.scene_number}`
+}
+
+export function LocationsWorkspace() {
+  const { directorAnalysis } = useProduction()
+  const scenes = directorAnalysis?.scenes ?? []
+
+  const [activeSceneNumber, setActiveSceneNumber] =
+    React.useState<number | null>(null)
+
+  const [requirementsByScene, setRequirementsByScene] = React.useState<
+    Record<number, SceneLocationRequirements>
+  >({})
+
+  /*
+   * When Director Agent results arrive, create one independent requirements
+   * form for every scene. Changing scenes will not erase the user's input.
+   */
+  React.useEffect(() => {
+    if (scenes.length === 0) return
+
+    setActiveSceneNumber((current) => current ?? scenes[0].scene_number)
+
+    setRequirementsByScene((current) => {
+      const next = { ...current }
+
+      for (const scene of scenes) {
+        if (!next[scene.scene_number]) {
+          next[scene.scene_number] = createDefaultRequirements(scene)
+        }
+      }
+
+      return next
+    })
+  }, [scenes])
+
+  const activeScene =
+    scenes.find(
+      (scene) => scene.scene_number === activeSceneNumber,
+    ) ?? scenes[0]
+
+  const activeRequirements = activeScene
+    ? requirementsByScene[activeScene.scene_number] ??
+      createDefaultRequirements(activeScene)
+    : null
+
+  const activeSceneIndex = activeScene
+    ? scenes.findIndex(
+        (scene) => scene.scene_number === activeScene.scene_number,
+      )
+    : -1
+
+  const detectedRequirements = activeScene
+    ? getDetectedRequirements(activeScene)
+    : []
+
+  const updateRequirement = React.useCallback(
+    <Key extends keyof SceneLocationRequirements>(
+      key: Key,
+      value: SceneLocationRequirements[Key],
+    ) => {
+      if (!activeScene) return
+
+      setRequirementsByScene((current) => ({
+        ...current,
+        [activeScene.scene_number]: {
+          ...(current[activeScene.scene_number] ??
+            createDefaultRequirements(activeScene)),
+          [key]: value,
+        },
+      }))
+    },
+    [activeScene],
+  )
+
+  const selectPreviousScene = () => {
+    if (activeSceneIndex <= 0) return
+
+    setActiveSceneNumber(
+      scenes[activeSceneIndex - 1].scene_number,
+    )
+  }
+
+  const selectNextScene = () => {
+    if (
+      activeSceneIndex < 0 ||
+      activeSceneIndex >= scenes.length - 1
+    ) {
+      return
+    }
+
+    setActiveSceneNumber(
+      scenes[activeSceneIndex + 1].scene_number,
+    )
+  }
+
+  const handleSearch = () => {
+    if (!activeScene || !activeRequirements) return
+
+    /*
+     * We will replace this console.log with the real FastAPI request.
+     * For now, it lets you confirm that the form creates the correct data.
+     */
+    const requestPayload = {
+      scene: activeScene,
+      user_requirements: {
+        preferred_region: activeRequirements.preferredRegion.trim(),
+        maximum_day_rate: Number(
+          activeRequirements.maximumDayRate,
+        ),
+        currency: activeRequirements.currency,
+        maximum_distance_km: Number(
+          activeRequirements.searchRadiusKm,
+        ),
+        environment: activeRequirements.environment,
+        permit_preference:
+          activeRequirements.permitPreference,
+        location_type: activeRequirements.practicalOrStudio,
+        filming_date:
+          activeRequirements.filmingDate || null,
+        additional_requirements:
+          activeRequirements.additionalRequirements.trim(),
+      },
+      user_id: 'web_user',
+    }
+
+    console.log('Location search request:', requestPayload)
+  }
+
+  const searchDisabled =
+    !activeRequirements?.preferredRegion.trim() ||
+    !activeRequirements.maximumDayRate ||
+    Number(activeRequirements.maximumDayRate) <= 0
+
   return (
-    <AnalysisGate agent="location">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-        {/* Left: filters + list */}
-        <div className="flex min-w-0 flex-col gap-4">
-          <Card className="border-border/60 bg-card/70">
-            <CardHeader>
-              <CardTitle className="text-base">Filters</CardTitle>
-              <CardDescription>
-                {filtered.length} of {LOCATIONS.length} recommendations match
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="region-select">Preferred region</FieldLabel>
-                  <Select value={region} onValueChange={(v) => setRegion(String(v))}>
-                    <SelectTrigger id="region-select">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {REGIONS.map((r) => (
-                          <SelectItem key={r.value} value={r.value}>
-                            {r.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
+    /*
+     * Use the Director gate here because this form should appear as soon as
+     * Director analysis is complete. The Location Agent has not run yet.
+     */
+    <AnalysisGate agent="director">
+      {activeScene && activeRequirements ? (
+        <div className="flex flex-col gap-5">
+          <SceneSelector
+            scenes={scenes}
+            activeScene={activeScene}
+            activeSceneIndex={activeSceneIndex}
+            onSceneChange={setActiveSceneNumber}
+            onPrevious={selectPreviousScene}
+            onNext={selectNextScene}
+          />
 
-                <Field>
-                  <FieldLabel htmlFor="cost-slider">
-                    Max day rate
-                    <span className="ml-auto font-mono text-xs tabular-nums text-amber">
-                      {formatCurrency(maxCost)}
-                    </span>
-                  </FieldLabel>
-                  <Slider
-                    id="cost-slider"
-                    min={1000}
-                    max={6000}
-                    step={100}
-                    value={maxCost}
-                    onValueChange={(v) => setMaxCost(Array.isArray(v) ? v[0] : v)}
-                  />
-                  <FieldDescription>Site fee per shoot day, excluding permits.</FieldDescription>
-                </Field>
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(340px,0.88fr)]">
+            <div className="flex min-w-0 flex-col gap-5">
+              <SceneSummary
+                scene={activeScene}
+                detectedRequirements={detectedRequirements}
+              />
 
-                <FieldSet>
-                  <FieldLegend variant="label">Scene requirements</FieldLegend>
-                  <FieldGroup className="gap-3">
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="f-indoor"
-                        checked={indoor}
-                        onCheckedChange={(c) => setIndoor(Boolean(c))}
-                      />
-                      <FieldLabel htmlFor="f-indoor" className="font-normal">
-                        Indoor / practical interiors
-                      </FieldLabel>
-                    </Field>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="f-outdoor"
-                        checked={outdoor}
-                        onCheckedChange={(c) => setOutdoor(Boolean(c))}
-                      />
-                      <FieldLabel htmlFor="f-outdoor" className="font-normal">
-                        Outdoor / exterior
-                      </FieldLabel>
-                    </Field>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="f-weather"
-                        checked={weatherOnly}
-                        onCheckedChange={(c) => setWeatherOnly(Boolean(c))}
-                      />
-                      <FieldLabel htmlFor="f-weather" className="font-normal">
-                        Weather-dependent only
-                      </FieldLabel>
-                    </Field>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="f-permit"
-                        checked={permitFree}
-                        onCheckedChange={(c) => setPermitFree(Boolean(c))}
-                      />
-                      <FieldLabel htmlFor="f-permit" className="font-normal">
-                        No permit required
-                      </FieldLabel>
-                    </Field>
-                  </FieldGroup>
-                </FieldSet>
+              <LocationRequirementsForm
+                scene={activeScene}
+                requirements={activeRequirements}
+                updateRequirement={updateRequirement}
+                searchDisabled={searchDisabled}
+                onSearch={handleSearch}
+              />
+            </div>
 
-                <Button variant="ghost" size="sm" onClick={reset} className="w-fit">
-                  Reset filters
-                </Button>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-
-          <div className="flex flex-col gap-3">
-            {filtered.length === 0 ? (
-              <Card className="border-dashed border-border/70 bg-card/40">
-                <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  No locations match these filters. Widen the day rate or region.
-                </CardContent>
-              </Card>
-            ) : (
-              filtered.map((loc) => (
-                <LocationCard
-                  key={loc.id}
-                  location={loc}
-                  active={loc.id === selectedId}
-                  onSelect={() => setSelectedId(loc.id)}
-                />
-              ))
-            )}
+            <PreSearchMap
+              region={activeRequirements.preferredRegion}
+              radius={activeRequirements.searchRadiusKm}
+              sceneNumber={activeScene.scene_number}
+            />
           </div>
         </div>
-
-        {/* Right: map */}
-        <Card className="overflow-hidden border-border/60 bg-card/70 py-0 lg:sticky lg:top-24 lg:h-[calc(100vh-8rem)]">
-          <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <MapPin className="size-4 text-amber" />
-              Scout map
-            </div>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-amber" />
-                Selected
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-primary" />
-                Candidate
-              </span>
-            </div>
-          </div>
-          <div className="h-80 w-full lg:h-[calc(100%-3.25rem)]">
-            <LocationMap locations={filtered} selectedId={selectedId} onSelect={setSelectedId} />
-          </div>
+      ) : (
+        <Card className="border-dashed border-border/70 bg-card/40">
+          <CardContent className="py-12 text-center">
+            <p className="text-sm text-muted-foreground">
+              No scenes were returned by the Director Agent.
+            </p>
+          </CardContent>
         </Card>
-      </div>
+      )}
     </AnalysisGate>
   )
 }
 
-function LocationCard({
-  location,
-  active,
-  onSelect,
+function SceneSelector({
+  scenes,
+  activeScene,
+  activeSceneIndex,
+  onSceneChange,
+  onPrevious,
+  onNext,
 }: {
-  location: LocationOption
-  active: boolean
-  onSelect: () => void
+  scenes: DirectorScene[]
+  activeScene: DirectorScene
+  activeSceneIndex: number
+  onSceneChange: (sceneNumber: number) => void
+  onPrevious: () => void
+  onNext: () => void
 }) {
-  const WeatherIcon = WEATHER_ICON[location.weather]
-
   return (
-    <Card
-      className={cn(
-        'cursor-pointer gap-0 overflow-hidden border-border/60 bg-card/70 py-0 transition-colors',
-        active ? 'border-amber/60 ring-1 ring-amber/30' : 'hover:border-primary/40',
-      )}
-      onClick={onSelect}
-    >
-      <div className="flex flex-col sm:flex-row">
-        <div className="relative h-36 w-full shrink-0 sm:h-auto sm:w-40">
-          <Image
-            src={location.image || '/placeholder.svg'}
-            alt={`${location.name} scout photo`}
-            fill
-            sizes="200px"
-            className="object-cover"
-          />
-          {active ? (
-            <span className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-amber px-2 py-0.5 text-[10px] font-semibold text-amber-foreground">
-              <Check className="size-3" />
-              Selected
-            </span>
-          ) : null}
+    <Card className="border-border/60 bg-card/70">
+      <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber/10 text-amber">
+            <Building2 className="size-5" />
+          </div>
+
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Location search scene
+            </p>
+            <p className="truncate text-sm font-semibold">
+              {activeScene.scene_heading}
+            </p>
+          </div>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <h3 className="truncate text-sm font-semibold">{location.name}</h3>
-              <p className="truncate text-xs text-muted-foreground">{location.region}</p>
-            </div>
-            <Badge className="shrink-0 bg-primary/15 text-primary">
-              {location.matchScore}% match
-            </Badge>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Previous scene"
+            disabled={activeSceneIndex <= 0}
+            onClick={onPrevious}
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+
+          <Select
+            value={String(activeScene.scene_number)}
+            onValueChange={(value) =>
+              onSceneChange(Number(value))
+            }
+          >
+            <SelectTrigger
+              className="w-[220px]"
+              aria-label="Select screenplay scene"
+            >
+              <SelectValue />
+            </SelectTrigger>
+
+            <SelectContent>
+              {scenes.map((scene) => (
+                <SelectItem
+                  key={scene.scene_number}
+                  value={String(scene.scene_number)}
+                >
+                  {getSceneLabel(scene)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Next scene"
+            disabled={activeSceneIndex >= scenes.length - 1}
+            onClick={onNext}
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function SceneSummary({
+  scene,
+  detectedRequirements,
+}: {
+  scene: DirectorScene
+  detectedRequirements: string[]
+}) {
+  return (
+    <Card className="overflow-hidden border-border/60 bg-card/70">
+      <CardHeader className="border-b border-border/50 bg-muted/20">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardDescription>
+              Scene {scene.scene_number}
+            </CardDescription>
+
+            <CardTitle className="mt-1 text-lg">
+              {scene.scene_heading}
+            </CardTitle>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            <Badge variant="outline" className="text-[10px] capitalize">
-              {location.environment}
-            </Badge>
-            <Badge variant="outline" className="text-[10px]">
-              Sc. {location.scenes.join(', ')}
-            </Badge>
-            {location.permitRequired ? (
-              <Badge variant="secondary" className="text-[10px]">
-                Permit required
-              </Badge>
-            ) : null}
-          </div>
+          <Badge
+            variant="outline"
+            className="border-primary/30 bg-primary/10 text-primary"
+          >
+            <Sparkles className="mr-1 size-3" />
+            Director analyzed
+          </Badge>
+        </div>
+      </CardHeader>
 
-          <Separator />
-
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
-            <div className="flex flex-col gap-0.5">
-              <dt className="text-muted-foreground">Day rate</dt>
-              <dd className="font-mono font-medium tabular-nums text-amber">
-                {formatCurrency(location.costPerDay)}
-              </dd>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <dt className="flex items-center gap-1 text-muted-foreground">
-                <WeatherIcon className="size-3" />
-                Forecast
-              </dt>
-              <dd className="flex items-center gap-1 font-medium capitalize">
-                {location.weather}
-                <span className="flex items-center gap-0.5 text-muted-foreground">
-                  <Thermometer className="size-3" />
-                  {location.tempC}°C
-                </span>
-              </dd>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <dt className="flex items-center gap-1 text-muted-foreground">
-                <Ruler className="size-3" />
-                Distance
-              </dt>
-              <dd className="font-medium tabular-nums">{location.distanceKm} km</dd>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <dt className="flex items-center gap-1 text-muted-foreground">
-                <Car className="size-3" />
-                Travel
-              </dt>
-              <dd className="font-medium tabular-nums">{location.travelMinutes} min</dd>
-            </div>
-          </dl>
-
-          <p className="text-pretty text-xs leading-relaxed text-muted-foreground">
-            {location.notes}
+      <CardContent className="space-y-4 pt-5">
+        <div>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Required setting
           </p>
+
+          <p className="text-sm font-medium">
+            {scene.location_setting || 'No specific setting detected'}
+          </p>
+        </div>
+
+        <Separator />
+
+        <div>
+          <div className="mb-2 flex items-center gap-2">
+            <Sparkles className="size-4 text-amber" />
+            <p className="text-sm font-medium">
+              AI-detected requirements
+            </p>
+          </div>
+
+          {detectedRequirements.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {detectedRequirements.map((requirement) => (
+                <Badge
+                  key={requirement}
+                  variant="secondary"
+                  className="font-normal"
+                >
+                  {requirement}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No special production requirements were detected.
+            </p>
+          )}
+
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            CinePilot extracted these requirements from the
+            screenplay. Your preferences below will be combined
+            with them automatically.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+type UpdateRequirement = <
+  Key extends keyof SceneLocationRequirements,
+>(
+  key: Key,
+  value: SceneLocationRequirements[Key],
+) => void
+
+function LocationRequirementsForm({
+  scene,
+  requirements,
+  updateRequirement,
+  searchDisabled,
+  onSearch,
+}: {
+  scene: DirectorScene
+  requirements: SceneLocationRequirements
+  updateRequirement: UpdateRequirement
+  searchDisabled: boolean
+  onSearch: () => void
+}) {
+  return (
+    <Card className="border-border/60 bg-card/70">
+      <CardHeader>
+        <CardTitle className="text-base">
+          Your location preferences
+        </CardTitle>
+
+        <CardDescription>
+          Add only the real-world constraints the agents cannot
+          determine from the screenplay.
+        </CardDescription>
+      </CardHeader>
+
+      <CardContent className="space-y-6">
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-2 sm:col-span-2">
+            <label
+              htmlFor="preferred-region"
+              className="text-sm font-medium"
+            >
+              Preferred filming region
+            </label>
+
+            <div className="relative">
+              <MapPin className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+
+              <Input
+                id="preferred-region"
+                value={requirements.preferredRegion}
+                onChange={(event) =>
+                  updateRequirement(
+                    'preferredRegion',
+                    event.target.value,
+                  )
+                }
+                placeholder="For example: Bratislava, Slovakia"
+                className="pl-9"
+                autoComplete="off"
+              />
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Enter a city, region, or country as the center of the
+              search.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="maximum-day-rate"
+              className="text-sm font-medium"
+            >
+              Maximum location day rate
+            </label>
+
+            <div className="flex gap-2">
+              <div className="relative min-w-0 flex-1">
+                <CircleDollarSign className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+
+                <Input
+                  id="maximum-day-rate"
+                  type="number"
+                  min="0"
+                  step="50"
+                  value={requirements.maximumDayRate}
+                  onChange={(event) =>
+                    updateRequirement(
+                      'maximumDayRate',
+                      event.target.value,
+                    )
+                  }
+                  className="pl-9"
+                />
+              </div>
+
+              <Select
+                value={requirements.currency}
+                onValueChange={(value) =>
+                  updateRequirement('currency', String(value))
+                }
+              >
+                <SelectTrigger
+                  className="w-24"
+                  aria-label="Budget currency"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+
+                <SelectContent>
+                  {CURRENCIES.map((currency) => (
+                    <SelectItem key={currency} value={currency}>
+                      {currency}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Location fee per filming day.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="search-radius"
+              className="text-sm font-medium"
+            >
+              Search radius
+            </label>
+
+            <div className="relative">
+              <Crosshair className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+
+              <Input
+                id="search-radius"
+                type="number"
+                min="1"
+                max="500"
+                value={requirements.searchRadiusKm}
+                onChange={(event) =>
+                  updateRequirement(
+                    'searchRadiusKm',
+                    event.target.value,
+                  )
+                }
+                className="pl-9 pr-12"
+              />
+
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                km
+              </span>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Distance from the preferred region.
+            </p>
+          </div>
+
+          <div className="space-y-2 sm:col-span-2">
+            <label
+              htmlFor="additional-requirements"
+              className="text-sm font-medium"
+            >
+              Additional requirements
+              <span className="ml-1 font-normal text-muted-foreground">
+                (optional)
+              </span>
+            </label>
+
+            <Textarea
+              id="additional-requirements"
+              value={requirements.additionalRequirements}
+              onChange={(event) =>
+                updateRequirement(
+                  'additionalRequirements',
+                  event.target.value,
+                )
+              }
+              maxLength={500}
+              rows={4}
+              placeholder="For example: Must resemble an abandoned 1980s motel, allow filming after midnight, and have space for two vehicles."
+              className="resize-none"
+            />
+
+            <div className="flex justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                Describe anything not already detected by the
+                Director Agent.
+              </span>
+
+              <span className="shrink-0 tabular-nums">
+                {requirements.additionalRequirements.length}/500
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <details className="group rounded-xl border border-border/60 bg-muted/15">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+            <span className="flex items-center gap-2">
+              <SlidersHorizontal className="size-4 text-muted-foreground" />
+              Advanced requirements
+            </span>
+
+            <ChevronRight className="size-4 text-muted-foreground transition-transform group-open:rotate-90" />
+          </summary>
+
+          <div className="grid gap-5 border-t border-border/60 p-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Scene environment
+              </label>
+
+              <Select
+                value={requirements.environment}
+                onValueChange={(value) =>
+                  updateRequirement(
+                    'environment',
+                    value as EnvironmentPreference,
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+
+                <SelectContent>
+                  <SelectItem value="Interior">
+                    Interior
+                  </SelectItem>
+                  <SelectItem value="Exterior">
+                    Exterior
+                  </SelectItem>
+                  <SelectItem value="Interior/Exterior">
+                    Interior and exterior
+                  </SelectItem>
+                  <SelectItem value="Either">
+                    Either
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              <p className="text-xs text-muted-foreground">
+                Prefilled from the Director Agent.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Permit preference
+              </label>
+
+              <Select
+                value={requirements.permitPreference}
+                onValueChange={(value) =>
+                  updateRequirement(
+                    'permitPreference',
+                    value as PermitPreference,
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+
+                <SelectContent>
+                  <SelectItem value="any">
+                    No preference
+                  </SelectItem>
+                  <SelectItem value="permit-free-preferred">
+                    Permit-free preferred
+                  </SelectItem>
+                  <SelectItem value="permit-free-required">
+                    Permit-free required
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Location type
+              </label>
+
+              <Select
+                value={requirements.practicalOrStudio}
+                onValueChange={(value) =>
+                  updateRequirement(
+                    'practicalOrStudio',
+                    value as SceneLocationRequirements['practicalOrStudio'],
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+
+                <SelectContent>
+                  <SelectItem value="either">
+                    Practical location or studio
+                  </SelectItem>
+                  <SelectItem value="practical">
+                    Practical location only
+                  </SelectItem>
+                  <SelectItem value="studio">
+                    Studio or constructed set
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label
+                htmlFor="filming-date"
+                className="text-sm font-medium"
+              >
+                Preferred filming date
+              </label>
+
+              <Input
+                id="filming-date"
+                type="date"
+                value={requirements.filmingDate}
+                onChange={(event) =>
+                  updateRequirement(
+                    'filmingDate',
+                    event.target.value,
+                  )
+                }
+              />
+            </div>
+          </div>
+        </details>
+
+        <Separator />
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Parallel will search real sources, then the Location
+            Agent will evaluate and rank the candidates.
+          </p>
+
+          <Button
+            type="button"
+            disabled={searchDisabled}
+            onClick={onSearch}
+            className="shrink-0 bg-amber text-amber-foreground hover:bg-amber/90"
+          >
+            <Search className="size-4" />
+            Find locations for Scene {scene.scene_number}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PreSearchMap({
+  region,
+  radius,
+  sceneNumber,
+}: {
+  region: string
+  radius: string
+  sceneNumber: number
+}) {
+  return (
+    <Card className="overflow-hidden border-border/60 bg-card/70 py-0 xl:sticky xl:top-24 xl:h-[calc(100vh-8rem)] xl:min-h-[620px]">
+      <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <MapPin className="size-4 text-amber" />
+          Scout map
+        </div>
+
+        <Badge variant="outline">
+          Scene {sceneNumber}
+        </Badge>
+      </div>
+
+      <div className="relative flex h-[420px] items-center justify-center overflow-hidden bg-[#101820] xl:h-[calc(100%-3.25rem)]">
+        <div
+          className="absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
+            backgroundSize: '42px 42px',
+          }}
+        />
+
+        <div className="absolute left-[18%] top-[24%] size-28 rounded-full border border-primary/20" />
+        <div className="absolute bottom-[20%] right-[12%] size-44 rounded-full border border-amber/15" />
+
+        <div className="relative mx-6 max-w-sm rounded-2xl border border-white/10 bg-black/45 p-6 text-center shadow-2xl backdrop-blur-md">
+          <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-amber/15 text-amber">
+            <MapPin className="size-6" />
+          </div>
+
+          <h3 className="mt-4 text-sm font-semibold text-white">
+            Your scout map is ready
+          </h3>
+
+          <p className="mt-2 text-xs leading-relaxed text-white/60">
+            {region.trim()
+              ? `CinePilot will search within ${radius || '50'} km of ${region}.`
+              : 'Enter a preferred region to define the center of the search.'}
+          </p>
+
+          <div className="mt-4 flex items-center justify-center gap-2 text-[11px] text-white/45">
+            <span className="size-2 rounded-full bg-amber" />
+            Candidate markers appear after the search
+          </div>
         </div>
       </div>
     </Card>
