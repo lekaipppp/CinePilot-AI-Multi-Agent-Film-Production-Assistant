@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from backend.app.agents.director_agent import Scene
 
 
+#This is the blueprint for the requirements entered by the user on the Location page.
 class LocationRequirements(BaseModel):
     """
     Requirements entered by the user on the Location page.
@@ -78,6 +79,16 @@ class LocationRequirements(BaseModel):
     )
 
 
+
+#This is the blueprint for the complete HTTP request received by the location endpoint.
+
+''''
+The backend needs both:
+-  The selected scene from the director analysis
+-  The requirements entered by the user
+
+'''
+
 class LocationSearchRequest(BaseModel):
     """
     Complete input received by the Location endpoint.
@@ -99,6 +110,9 @@ class LocationSearchRequest(BaseModel):
     )
 
 
+#locationrequestconfirmation is the answer sent back:
+
+#After FastAPI receives the package, it needs to answer the frontend.
 class LocationRequestConfirmation(BaseModel):
     """
     Temporary response used to confirm that the backend received
