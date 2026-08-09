@@ -21,6 +21,7 @@ class ScreenplayAnalysisRequest(BaseModel):
 async def analyze_screenplay(
     request: ScreenplayAnalysisRequest, 
 ) -> ScriptRubric:
+    
     try:
         return await run_director_agent(
             screenplay_text=request.screenplay_text,
