@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from backend.app.agents.director_agent import ScriptRubric
 from backend.app.services.director_runner import run_director_agent
 
+#In FastAPI, router = APIRouter creates a mini, isolated instance of a PastAPI application that you can use to group realted API routes together.
 router = APIRouter()
 
 
