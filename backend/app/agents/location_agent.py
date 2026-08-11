@@ -155,8 +155,16 @@ Rules:
    requirement, time of day, weather, props, shooting requirements, user
    budget, preferred region, maximum distance, and other user constraints.
 
-4. Return multiple suitable candidates for each scene whenever enough
-   search results are available.
+4. Aim to return between 3 and 5 distinct suitable candidates for each
+   scene.
+
+   Return 3 candidates whenever the retrieved evidence identifies at
+   least 3 credible real locations. Return 4 or 5 when additional
+   candidates are sufficiently supported.
+
+   Return fewer than 3 only when the Parallel Search results genuinely
+   contain fewer than 3 distinct, identifiable, suitable locations.
+   Never invent candidates merely to reach the target number.
 
 5. Order each scene's candidates from the highest match_score to the lowest.
 
@@ -195,6 +203,20 @@ Rules:
 
 17. If no suitable candidates were retrieved for a scene, return that
     scene with an empty candidates list. Do not create fictional results.
+
+18. Treat every distinct named venue, property, studio, or rentable
+    location supported by the retrieved results as a separate candidate.
+
+19. A missing price, coordinate, image, or confirmed availability does
+    not automatically disqualify an otherwise credible candidate. Use
+    null, an empty list, or "unknown" for information that the source
+    does not provide.
+
+20. Do not collapse several distinct locations into one candidate. Each
+    candidate must have its own location_id, place_name, evaluation, and
+    source_url.
+
+21. Include no more than 5 candidates for one scene.
 
 Return structured output matching the required schema.
 """
