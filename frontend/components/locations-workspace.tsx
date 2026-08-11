@@ -1,4 +1,3 @@
-'use client'
 
 import * as React from 'react'
 import {
@@ -35,6 +34,10 @@ import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { useProduction } from '@/components/production-provider'
 import type { DirectorScene } from '@/lib/director-api'
+import {
+  searchLocations,
+  type LocationAgentOutput,
+} from '@/lib/location-api'
 
 type EnvironmentPreference =
   | 'Interior'
@@ -113,6 +116,12 @@ function getSceneLabel(scene: DirectorScene): string {
 export function LocationsWorkspace() {
   const { directorAnalysis } = useProduction()
   const scenes = directorAnalysis?.scenes ?? []
+
+  const [isSearching, setIsSearching] = React.useState(false)
+  const [searchError, setSearchError] =
+    React.useState<string | null>(null)
+  const [locationResult, setLocationResult] =
+    React.useState<LocationAgentOutput | null>(null)
 
   const [activeSceneNumber, setActiveSceneNumber] =
     React.useState<number | null>(null)
@@ -203,13 +212,9 @@ export function LocationsWorkspace() {
     )
   }
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!activeScene || !activeRequirements) return
 
-    /*
-     * We will replace this console.log with the real FastAPI request.
-     * For now, it lets you confirm that the form creates the correct data.
-     */
     const requestPayload = {
       scene: activeScene,
       user_requirements: {
@@ -233,7 +238,22 @@ export function LocationsWorkspace() {
       user_id: 'web_user',
     }
 
-    console.log('Location search request:', requestPayload)
+    setIsSearching(true)
+    setSearchError(null)
+    setLocationResult(null)
+
+    try {
+      const result = await searchLocations(requestPayload)
+      setLocationResult(result)
+    } catch (error) {
+      setSearchError(
+        error instanceof Error
+          ? error.message
+          : 'Location search failed.',
+      )
+    } finally {
+      setIsSearching(false)
+    }
   }
 
   const searchDisabled =
@@ -270,6 +290,7 @@ export function LocationsWorkspace() {
                 requirements={activeRequirements}
                 updateRequirement={updateRequirement}
                 searchDisabled={searchDisabled}
+                isSearching={isSearching}
                 onSearch={handleSearch}
               />
             </div>
@@ -280,6 +301,68 @@ export function LocationsWorkspace() {
               sceneNumber={activeScene.scene_number}
             />
           </div>
+
+          {searchError && (
+            <Card className="border-destructive/50">
+              <CardContent className="pt-6 text-sm text-destructive">
+                {searchError}
+              </CardContent>
+            </Card>
+          )}
+
+          {locationResult?.scene_recommendations.map(
+            (recommendation) => (
+              <Card key={recommendation.scene_number}>
+                <CardHeader>
+                  <CardTitle>
+                    Location recommendations for Scene{' '}
+                    {recommendation.scene_number}
+                  </CardTitle>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {recommendation.candidates.length === 0 ? (
+                    <p>No suitable locations were found.</p>
+                  ) : (
+                    recommendation.candidates.map((candidate) => (
+                      <div
+                        key={candidate.location_id}
+                        className="rounded-lg border p-4"
+                      >
+                        <div className="flex justify-between gap-4">
+                          <h3 className="font-semibold">
+                            {candidate.place_name}
+                          </h3>
+
+                          <Badge>
+                            {candidate.match_score}% match
+                          </Badge>
+                        </div>
+
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {candidate.address ??
+                            'Address unavailable'}
+                        </p>
+
+                        <p className="mt-2 text-sm">
+                          {candidate.match_reason}
+                        </p>
+
+                        <a
+                          href={candidate.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-block text-sm text-primary underline"
+                        >
+                          View source
+                        </a>
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            ),
+          )}
         </div>
       ) : (
         <Card className="border-dashed border-border/70 bg-card/40">
@@ -473,13 +556,15 @@ function LocationRequirementsForm({
   requirements,
   updateRequirement,
   searchDisabled,
+  isSearching,
   onSearch,
 }: {
   scene: DirectorScene
   requirements: SceneLocationRequirements
   updateRequirement: UpdateRequirement
   searchDisabled: boolean
-  onSearch: () => void
+  isSearching: boolean
+  onSearch: () => Promise<void>
 }) {
   return (
     <Card className="border-border/60 bg-card/70">
@@ -806,12 +891,14 @@ function LocationRequirementsForm({
 
           <Button
             type="button"
-            disabled={searchDisabled}
-            onClick={onSearch}
+            disabled={searchDisabled || isSearching}
+            onClick={() => void onSearch()}
             className="shrink-0 bg-amber text-amber-foreground hover:bg-amber/90"
           >
             <Search className="size-4" />
-            Find locations for Scene {scene.scene_number}
+            {isSearching
+              ? 'Searching and evaluating...'
+              : `Find locations for Scene ${scene.scene_number}`}
           </Button>
         </div>
       </CardContent>
