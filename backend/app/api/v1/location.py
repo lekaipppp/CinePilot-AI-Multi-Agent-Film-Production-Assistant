@@ -1,35 +1,58 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from backend.app.schemas.location import (
-    LocationRequestConfirmation,
-    LocationSearchRequest,
-)
+from backend.app.agents.location_agent import LocationAgentOutput
+from backend.app.schemas.location import LocationSearchRequest
+from backend.app.services.location_runner import location_runner
+from backend.app.services.parallel_search import search_location_candidates
+
 
 router = APIRouter()
 
 @router.post(
     "/search",
-    response_model=LocationRequestConfirmation,
+    response_model=LocationAgentOutput,
 )
 async def search_locations(
     request: LocationSearchRequest,
-) -> LocationRequestConfirmation:
+) -> LocationAgentOutput:
 
     scene = request.scene
     requirements = request.user_requirements
 
-    print("\nDirector Agent scene received:")
-    print(scene.model_dump_json(indent=2))
+    try:
+        parallel_results = await search_location_candidates(
+            scene=request.scene,
+            requirements=request.user_requirements,
+        )
 
-    print("\nUser location requirements received:")
-    print(requirements.model_dump_json(indent=2))
+        location_result = await location_runner(
+            #model_dump is a built-in method that converts a Pydantic model instance into a standard Python dictionary(dict)
+            director_analysis=request.scene.model_dump(),
 
-    return LocationRequestConfirmation(
-        status="received",
-        scene_number=scene.scene_number,
-        preferred_region=requirements.preferred_region,
-        message=(
-            "Received the Director Agent analysis and location "
-            f"requirements for Scene {scene.scene_number}."
-        ),
-    )
+            user_requirements=(
+                request.user_requirements.model_dump(mode="json")
+            ),
+            parallel_results=parallel_results,
+            user_id = request.user_id,
+        )
+        return location_result
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=str(error),
+        ) from error
+
+    except RuntimeError as error:
+        raise HTTPException(
+            status_code=502,
+            detail=str(error),
+        ) from error
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected location pipeline error.",
+        ) from error
+
+

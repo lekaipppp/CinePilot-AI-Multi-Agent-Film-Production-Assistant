@@ -110,19 +110,3 @@ class LocationSearchRequest(BaseModel):
     )
 
 
-#locationrequestconfirmation is the answer sent back:
-
-#After FastAPI receives the package, it needs to answer the frontend.
-class LocationRequestConfirmation(BaseModel):
-    """
-    Temporary response used to confirm that the backend received
-    both the Director scene and the user requirements.
-    """
-
-    status: Literal["received"]
-
-    scene_number: int
-
-    preferred_region: str
-
-    message: str
