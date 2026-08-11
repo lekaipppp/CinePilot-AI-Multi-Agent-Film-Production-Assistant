@@ -62,17 +62,30 @@ User requirements:
 - Filming date: {filming_date}
 - Additional requirements: {additional_requirements}
 
+Find at least 5 distinct, real, individually identifiable location
+candidates when sufficient public evidence exists.
+
+Each candidate must have its own public name or listing title and source
+URL. Do not treat a general city, region, search-results page, or article
+about several unnamed places as one candidate.
+
 Prioritize real venues, properties, studios, tourism or film-commission
-listings, and location directories. Look for evidence concerning the
-location's appearance, address, filming suitability, rental information,
-permit information, accessibility, and contact details. Do not invent
-prices or availability when a source does not provide them.
+listings, location directories, event-space listings, and production
+rental listings.
+
+Look for evidence concerning each candidate's appearance, address,
+filming suitability, rental information, permit information,
+accessibility, amenities, and contact details.
+
+Candidates do not need to publish every detail to be considered. Missing
+price, availability, coordinates, or amenities may be returned as
+unknown later. Do not invent missing information.
 """.strip()
 
 
 def build_search_queries(
-        scene: Scene,
-        requirements: LocationRequirements,
+    scene: Scene,
+    requirements: LocationRequirements,
 ) -> list[str]:
 
     region = requirements.preferred_region
@@ -83,12 +96,13 @@ def build_search_queries(
         or "filming location"
     )
 
-    return [
-        f"{setting} filming location {region}",
-        f"film locations {region} rental",
-        f"{requirements.location_type} film venue {region}",
-    ]
+    location_type = requirements.location_type
 
+    return [
+        f"{setting} venue {region}",
+        f"filming locations rental {region}",
+        f"{location_type} film location {region}",
+    ]
 
 def execute_parallel_search(
         objective: str,
