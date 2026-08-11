@@ -80,7 +80,7 @@ def build_search_queries(
     setting = (
         scene.location_setting
         or scene.scene_heading
-        or "filmiong location"
+        or "filming location"
     )
 
     return [
@@ -92,21 +92,21 @@ def build_search_queries(
 
 def execute_parallel_search(
         objective: str,
-        search_quries: list[str],
+        search_queries: list[str],
 ) -> Any:
 
     api_key = os.getenv("PARALLEL_API_KEY")
 
     if not api_key:
         raise RuntimeError(
-            "Parallel_API)KEY is missing."
+            "Parallel_API_KEY is missing."
         )
 
     client = Parallel(api_key=api_key)
 
     return client.search(
         objective=objective,
-        search_quries=search_quries,
+        search_quries=search_queries,
         mode="basic",
         max_chars_total=20_000,
 
@@ -149,7 +149,7 @@ async def search_location_candidates(
 
     objective = build_search_objective(scene=scene, requirements=requirements)
 
-    search_queries = build_search_objective(scene=scene, requirements=requirements)
+    search_queries = build_search_queries(scene=scene, requirements=requirements)
 
     try:
         search_response = await asyncio.to_thread(

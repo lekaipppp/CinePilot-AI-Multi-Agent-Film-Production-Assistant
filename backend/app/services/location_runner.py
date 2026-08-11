@@ -25,11 +25,9 @@ async def location_runner(
     if not user_requirements:
         raise ValueError("User requirement is required. ")
 
-    if not parallel_results:
-        raise ValueError("Parallel Search. returned no results. ")
 #if we want to caculate the match_score, we need to have the infromation related to the scenen, and the user requirement
 
-    session_service = InMemorySessionService
+    session_service = InMemorySessionService()
     location_session_id = str(uuid4())
 
     #create a session service
@@ -41,12 +39,6 @@ async def location_runner(
     )
 
     runner = Runner(
-        agent=location_agent,
-        app_name=APP_NAME,
-        session_service=session_service,
-    )
-
-    location_runner = Runner(
         agent=location_agent,
         app_name=APP_NAME,
         session_service=session_service,
