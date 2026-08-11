@@ -100,7 +100,12 @@ export function ProjectSummary() {
         </p>
       </CardContent>
       <CardFooter>
-        <Button variant="outline" size="sm" render={<Link href="/director" />}>
+        <Button
+          variant="outline"
+          size="sm"
+          nativeButton={false}
+          render={<Link href="/director" />}
+        >
           Open scene breakdown
           <ArrowRight data-icon="inline-end" />
         </Button>
