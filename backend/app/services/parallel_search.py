@@ -106,7 +106,7 @@ def execute_parallel_search(
 
     return client.search(
         objective=objective,
-        search_quries=search_queries,
+        search_queries=search_queries,
         mode="basic",
         max_chars_total=20_000,
 
