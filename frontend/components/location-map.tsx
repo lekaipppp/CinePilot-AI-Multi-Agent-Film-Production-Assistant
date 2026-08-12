@@ -1,74 +1,180 @@
 'use client'
 
 import * as React from 'react'
-import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from 'react-leaflet'
-import type { LocationOption } from '@/lib/production-data'
-import { formatCurrency } from '@/lib/production-data'
+import {
+  CircleMarker,
+  MapContainer,
+  TileLayer,
+  Tooltip as LeafletTooltip,
+  useMap,
+} from 'react-leaflet'
+
+import type { LocationCandidate } from '@/lib/location-api'
+
 import 'leaflet/dist/leaflet.css'
 
-function FitBounds({ locations }: { locations: LocationOption[] }) {
+type MappableCandidate = LocationCandidate & {
+  latitude: number
+  longitude: number
+}
+
+function hasCoordinates(
+  candidate: LocationCandidate,
+): candidate is MappableCandidate {
+  return (
+    typeof candidate.latitude === 'number' &&
+    Number.isFinite(candidate.latitude) &&
+    typeof candidate.longitude === 'number' &&
+    Number.isFinite(candidate.longitude)
+  )
+}
+
+function FitCandidateBounds({
+  candidates,
+}: {
+  candidates: MappableCandidate[]
+}) {
   const map = useMap()
+
   React.useEffect(() => {
-    if (locations.length === 0) return
-    const bounds = locations.map((l) => [l.lat, l.lng]) as [number, number][]
-    map.fitBounds(bounds, { padding: [48, 48], maxZoom: 9 })
-  }, [locations, map])
+    if (candidates.length === 0) return
+
+    if (candidates.length === 1) {
+      map.setView(
+        [candidates[0].latitude, candidates[0].longitude],
+        13,
+      )
+      return
+    }
+
+    map.fitBounds(
+      candidates.map((candidate) => [
+        candidate.latitude,
+        candidate.longitude,
+      ]),
+      {
+        padding: [48, 48],
+        maxZoom: 13,
+      },
+    )
+  }, [candidates, map])
+
   return null
 }
 
-function Focus({ location }: { location: LocationOption | null }) {
+function FocusCandidate({
+  candidate,
+}: {
+  candidate: MappableCandidate | null
+}) {
   const map = useMap()
+
   React.useEffect(() => {
-    if (!location) return
-    map.flyTo([location.lat, location.lng], 10, { duration: 0.8 })
-  }, [location, map])
+    if (!candidate) return
+
+    map.flyTo(
+      [candidate.latitude, candidate.longitude],
+      14,
+      {
+        duration: 0.8,
+      },
+    )
+  }, [candidate, map])
+
   return null
 }
 
 export default function LocationMap({
-  locations,
+  candidates,
   selectedId,
   onSelect,
 }: {
-  locations: LocationOption[]
+  candidates: LocationCandidate[]
   selectedId: string | null
-  onSelect: (id: string) => void
+  onSelect: (locationId: string) => void
 }) {
-  const selected = locations.find((l) => l.id === selectedId) ?? null
+  const mappableCandidates = candidates.filter(hasCoordinates)
+
+  const selectedCandidate =
+    mappableCandidates.find(
+      (candidate) => candidate.location_id === selectedId,
+    ) ?? null
+
+  if (mappableCandidates.length === 0) {
+    return (
+      <div className="flex size-full min-h-[420px] items-center justify-center bg-[#101820] p-6 text-center">
+        <div className="max-w-sm">
+          <p className="font-medium text-white">
+            No map coordinates available
+          </p>
+
+          <p className="mt-2 text-sm leading-relaxed text-white/60">
+            The locations were found, but their sources did not provide
+            coordinates. They can still be reviewed in the candidate
+            cards below.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <MapContainer
-      center={[36.3, -117]}
-      zoom={7}
+      center={[
+        mappableCandidates[0].latitude,
+        mappableCandidates[0].longitude,
+      ]}
+      zoom={12}
       scrollWheelZoom
       className="size-full"
-      style={{ minHeight: '100%' }}
+      style={{ minHeight: '420px' }}
     >
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap &copy; CARTO'
+        attribution="&copy; OpenStreetMap contributors &copy; CARTO"
       />
-      <FitBounds locations={locations} />
-      <Focus location={selected} />
-      {locations.map((loc) => {
-        const active = loc.id === selectedId
+
+      <FitCandidateBounds candidates={mappableCandidates} />
+
+      <FocusCandidate candidate={selectedCandidate} />
+
+      {mappableCandidates.map((candidate) => {
+        const selected =
+          candidate.location_id === selectedId
+
         return (
           <CircleMarker
-            key={loc.id}
-            center={[loc.lat, loc.lng]}
-            radius={active ? 13 : 9}
+            key={candidate.location_id}
+            center={[
+              candidate.latitude,
+              candidate.longitude,
+            ]}
+            radius={selected ? 13 : 9}
             pathOptions={{
-              color: active ? '#f4b942' : '#4a90ff',
-              fillColor: active ? '#f4b942' : '#4a90ff',
-              fillOpacity: active ? 0.75 : 0.4,
+              color: selected ? '#f4b942' : '#4a90ff',
+              fillColor: selected ? '#f4b942' : '#4a90ff',
+              fillOpacity: selected ? 0.8 : 0.5,
               weight: 2,
             }}
-            eventHandlers={{ click: () => onSelect(loc.id) }}
+            eventHandlers={{
+              click: () => onSelect(candidate.location_id),
+            }}
           >
-            <LeafletTooltip direction="top" offset={[0, -8]}>
-              <span style={{ fontWeight: 600 }}>{loc.name}</span>
-              <br />
-              {formatCurrency(loc.costPerDay)} / day · Sc. {loc.scenes.join(', ')}
+            <LeafletTooltip
+              direction="top"
+              offset={[0, -8]}
+            >
+              <div>
+                <strong>{candidate.place_name}</strong>
+
+                <br />
+
+                {candidate.match_score}% match
+
+                {candidate.address
+                  ? ` · ${candidate.address}`
+                  : ''}
+              </div>
             </LeafletTooltip>
           </CircleMarker>
         )

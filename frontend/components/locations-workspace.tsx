@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import * as React from 'react'
 import {
   Building2,
@@ -39,6 +40,13 @@ import {
   searchLocations,
   type LocationAgentOutput,
 } from '@/lib/location-api'
+
+const LocationMap = dynamic(
+  () => import('@/components/location-map'),
+  {
+    ssr: false,
+  },
+)
 
 type EnvironmentPreference =
   | 'Interior'
@@ -119,17 +127,23 @@ export function LocationsWorkspace() {
   const scenes = directorAnalysis?.scenes ?? []
 
   const [isSearching, setIsSearching] = React.useState(false)
+
   const [searchError, setSearchError] =
     React.useState<string | null>(null)
+
   const [locationResult, setLocationResult] =
     React.useState<LocationAgentOutput | null>(null)
+
+  const [selectedLocationId, setSelectedLocationId] =
+    React.useState<string | null>(null)
 
   const [activeSceneNumber, setActiveSceneNumber] =
     React.useState<number | null>(null)
 
-  const [requirementsByScene, setRequirementsByScene] = React.useState<
-    Record<number, SceneLocationRequirements>
-  >({})
+  const [requirementsByScene, setRequirementsByScene] =
+    React.useState<
+      Record<number, SceneLocationRequirements>
+    >({})
 
   /*
    * When Director Agent results arrive, create one independent requirements
@@ -138,14 +152,17 @@ export function LocationsWorkspace() {
   React.useEffect(() => {
     if (scenes.length === 0) return
 
-    setActiveSceneNumber((current) => current ?? scenes[0].scene_number)
+    setActiveSceneNumber(
+      (current) => current ?? scenes[0].scene_number,
+    )
 
     setRequirementsByScene((current) => {
       const next = { ...current }
 
       for (const scene of scenes) {
         if (!next[scene.scene_number]) {
-          next[scene.scene_number] = createDefaultRequirements(scene)
+          next[scene.scene_number] =
+            createDefaultRequirements(scene)
         }
       }
 
@@ -165,13 +182,24 @@ export function LocationsWorkspace() {
 
   const activeSceneIndex = activeScene
     ? scenes.findIndex(
-        (scene) => scene.scene_number === activeScene.scene_number,
+        (scene) =>
+          scene.scene_number === activeScene.scene_number,
       )
     : -1
 
   const detectedRequirements = activeScene
     ? getDetectedRequirements(activeScene)
     : []
+
+  const activeRecommendation =
+    locationResult?.scene_recommendations.find(
+      (recommendation) =>
+        recommendation.scene_number ===
+        activeScene?.scene_number,
+    ) ?? null
+
+  const activeCandidates =
+    activeRecommendation?.candidates ?? []
 
   const updateRequirement = React.useCallback(
     <Key extends keyof SceneLocationRequirements>(
@@ -219,33 +247,66 @@ export function LocationsWorkspace() {
     const requestPayload = {
       scene: activeScene,
       user_requirements: {
-        preferred_region: activeRequirements.preferredRegion.trim(),
+        preferred_region:
+          activeRequirements.preferredRegion.trim(),
+
         maximum_day_rate: Number(
           activeRequirements.maximumDayRate,
         ),
+
         currency: activeRequirements.currency,
+
         maximum_distance_km: Number(
           activeRequirements.searchRadiusKm,
         ),
+
         environment: activeRequirements.environment,
+
         permit_preference:
           activeRequirements.permitPreference,
-        location_type: activeRequirements.practicalOrStudio,
+
+        location_type:
+          activeRequirements.practicalOrStudio,
+
         filming_date:
           activeRequirements.filmingDate || null,
+
         additional_requirements:
           activeRequirements.additionalRequirements.trim(),
       },
+
       user_id: 'web_user',
     }
 
     setIsSearching(true)
     setSearchError(null)
     setLocationResult(null)
+    setSelectedLocationId(null)
 
     try {
       const result = await searchLocations(requestPayload)
+
       setLocationResult(result)
+
+      const returnedCandidates =
+        result.scene_recommendations.find(
+          (recommendation) =>
+            recommendation.scene_number ===
+            activeScene.scene_number,
+        )?.candidates ?? []
+
+      const firstMappableCandidate =
+        returnedCandidates.find(
+          (candidate) =>
+            typeof candidate.latitude === 'number' &&
+            Number.isFinite(candidate.latitude) &&
+            typeof candidate.longitude === 'number' &&
+            Number.isFinite(candidate.longitude),
+        )
+
+      setSelectedLocationId(
+        firstMappableCandidate?.location_id ?? null,
+      )
     } catch (error) {
       setSearchError(
         error instanceof Error
@@ -261,6 +322,14 @@ export function LocationsWorkspace() {
     !activeRequirements?.preferredRegion.trim() ||
     !activeRequirements.maximumDayRate ||
     Number(activeRequirements.maximumDayRate) <= 0
+
+  const markerCount = activeCandidates.filter(
+    (candidate) =>
+      typeof candidate.latitude === 'number' &&
+      Number.isFinite(candidate.latitude) &&
+      typeof candidate.longitude === 'number' &&
+      Number.isFinite(candidate.longitude),
+  ).length
 
   return (
     /*
@@ -283,7 +352,9 @@ export function LocationsWorkspace() {
             <div className="flex min-w-0 flex-col gap-5">
               <SceneSummary
                 scene={activeScene}
-                detectedRequirements={detectedRequirements}
+                detectedRequirements={
+                  detectedRequirements
+                }
               />
 
               <LocationRequirementsForm
@@ -296,11 +367,41 @@ export function LocationsWorkspace() {
               />
             </div>
 
-            <PreSearchMap
-              region={activeRequirements.preferredRegion}
-              radius={activeRequirements.searchRadiusKm}
-              sceneNumber={activeScene.scene_number}
-            />
+            {locationResult ? (
+              <Card className="overflow-hidden border-border/60 bg-card/70 py-0 xl:sticky xl:top-24 xl:h-[calc(100vh-8rem)] xl:min-h-[620px]">
+                <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <MapPin className="size-4 text-amber" />
+                    Scout map
+                  </div>
+
+                  <Badge variant="outline">
+                    {markerCount}{' '}
+                    {markerCount === 1
+                      ? 'marker'
+                      : 'markers'}
+                  </Badge>
+                </div>
+
+                <div className="h-[420px] xl:h-[calc(100%-3.25rem)]">
+                  <LocationMap
+                    candidates={activeCandidates}
+                    selectedId={selectedLocationId}
+                    onSelect={setSelectedLocationId}
+                  />
+                </div>
+              </Card>
+            ) : (
+              <PreSearchMap
+                region={
+                  activeRequirements.preferredRegion
+                }
+                radius={
+                  activeRequirements.searchRadiusKm
+                }
+                sceneNumber={activeScene.scene_number}
+              />
+            )}
           </div>
 
           {searchError && (
@@ -322,43 +423,81 @@ export function LocationsWorkspace() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
-                  {recommendation.candidates.length === 0 ? (
-                    <p>No suitable locations were found.</p>
+                  {recommendation.candidates.length ===
+                  0 ? (
+                    <p>
+                      No suitable locations were found.
+                    </p>
                   ) : (
-                    recommendation.candidates.map((candidate) => (
-                      <div
-                        key={candidate.location_id}
-                        className="rounded-lg border p-4"
-                      >
-                        <div className="flex justify-between gap-4">
-                          <h3 className="font-semibold">
-                            {candidate.place_name}
-                          </h3>
-
-                          <Badge>
-                            {candidate.match_score}% match
-                          </Badge>
-                        </div>
-
-                        <p className="mt-2 text-sm text-muted-foreground">
-                          {candidate.address ??
-                            'Address unavailable'}
-                        </p>
-
-                        <p className="mt-2 text-sm">
-                          {candidate.match_reason}
-                        </p>
-
-                        <a
-                          href={candidate.source_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-block text-sm text-primary underline"
+                    recommendation.candidates.map(
+                      (candidate) => (
+                        <div
+                          key={candidate.location_id}
+                          className={`rounded-lg border p-4 transition-colors ${
+                            candidate.location_id ===
+                            selectedLocationId
+                              ? 'border-amber/70 bg-amber/5'
+                              : 'border-border'
+                          }`}
                         >
-                          View source
-                        </a>
-                      </div>
-                    ))
+                          <div className="flex justify-between gap-4">
+                            <h3 className="font-semibold">
+                              {candidate.place_name}
+                            </h3>
+
+                            <Badge>
+                              {candidate.match_score}%
+                              match
+                            </Badge>
+                          </div>
+
+                          <p className="mt-2 text-sm text-muted-foreground">
+                            {candidate.address ??
+                              'Address unavailable'}
+                          </p>
+
+                          <p className="mt-2 text-sm">
+                            {candidate.match_reason}
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                            {typeof candidate.latitude ===
+                              'number' &&
+                              Number.isFinite(
+                                candidate.latitude,
+                              ) &&
+                              typeof candidate.longitude ===
+                                'number' &&
+                              Number.isFinite(
+                                candidate.longitude,
+                              ) && (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setSelectedLocationId(
+                                      candidate.location_id,
+                                    )
+                                  }
+                                >
+                                  <MapPin className="size-3.5" />
+                                  Show on map
+                                </Button>
+                              )}
+
+                            <a
+                              href={candidate.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-sm text-primary underline"
+                            >
+                              View source
+                            </a>
+                          </div>
+                        </div>
+                      ),
+                    )
                   )}
                 </CardContent>
               </Card>
@@ -369,7 +508,8 @@ export function LocationsWorkspace() {
         <Card className="border-dashed border-border/70 bg-card/40">
           <CardContent className="py-12 text-center">
             <p className="text-sm text-muted-foreground">
-              No scenes were returned by the Director Agent.
+              No scenes were returned by the Director
+              Agent.
             </p>
           </CardContent>
         </Card>
@@ -405,6 +545,7 @@ function SceneSelector({
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Location search scene
             </p>
+
             <p className="truncate text-sm font-semibold">
               {activeScene.scene_heading}
             </p>
@@ -440,7 +581,9 @@ function SceneSelector({
               {scenes.map((scene) => (
                 <SelectItem
                   key={scene.scene_number}
-                  value={String(scene.scene_number)}
+                  value={String(
+                    scene.scene_number,
+                  )}
                 >
                   {getSceneLabel(scene)}
                 </SelectItem>
@@ -453,7 +596,10 @@ function SceneSelector({
             variant="outline"
             size="icon"
             aria-label="Next scene"
-            disabled={activeSceneIndex >= scenes.length - 1}
+            disabled={
+              activeSceneIndex >=
+              scenes.length - 1
+            }
             onClick={onNext}
           >
             <ChevronRight className="size-4" />
@@ -502,7 +648,8 @@ function SceneSummary({
           </p>
 
           <p className="text-sm font-medium">
-            {scene.location_setting || 'No specific setting detected'}
+            {scene.location_setting ||
+              'No specific setting detected'}
           </p>
         </div>
 
@@ -511,6 +658,7 @@ function SceneSummary({
         <div>
           <div className="mb-2 flex items-center gap-2">
             <Sparkles className="size-4 text-amber" />
+
             <p className="text-sm font-medium">
               AI-detected requirements
             </p>
@@ -518,26 +666,29 @@ function SceneSummary({
 
           {detectedRequirements.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {detectedRequirements.map((requirement) => (
-                <Badge
-                  key={requirement}
-                  variant="secondary"
-                  className="font-normal"
-                >
-                  {requirement}
-                </Badge>
-              ))}
+              {detectedRequirements.map(
+                (requirement) => (
+                  <Badge
+                    key={requirement}
+                    variant="secondary"
+                    className="font-normal"
+                  >
+                    {requirement}
+                  </Badge>
+                ),
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              No special production requirements were detected.
+              No special production requirements were
+              detected.
             </p>
           )}
 
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
             CinePilot extracted these requirements from the
-            screenplay. Your preferences below will be combined
-            with them automatically.
+            screenplay. Your preferences below will be
+            combined with them automatically.
           </p>
         </div>
       </CardContent>
@@ -575,8 +726,8 @@ function LocationRequirementsForm({
         </CardTitle>
 
         <CardDescription>
-          Add only the real-world constraints the agents cannot
-          determine from the screenplay.
+          Add only the real-world constraints the agents
+          cannot determine from the screenplay.
         </CardDescription>
       </CardHeader>
 
@@ -595,7 +746,9 @@ function LocationRequirementsForm({
 
               <Input
                 id="preferred-region"
-                value={requirements.preferredRegion}
+                value={
+                  requirements.preferredRegion
+                }
                 onChange={(event) =>
                   updateRequirement(
                     'preferredRegion',
@@ -609,8 +762,8 @@ function LocationRequirementsForm({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Enter a city, region, or country as the center of the
-              search.
+              Enter a city, region, or country as the
+              center of the search.
             </p>
           </div>
 
@@ -631,7 +784,9 @@ function LocationRequirementsForm({
                   type="number"
                   min="0"
                   step="50"
-                  value={requirements.maximumDayRate}
+                  value={
+                    requirements.maximumDayRate
+                  }
                   onChange={(event) =>
                     updateRequirement(
                       'maximumDayRate',
@@ -645,7 +800,10 @@ function LocationRequirementsForm({
               <Select
                 value={requirements.currency}
                 onValueChange={(value) =>
-                  updateRequirement('currency', String(value))
+                  updateRequirement(
+                    'currency',
+                    String(value),
+                  )
                 }
               >
                 <SelectTrigger
@@ -657,7 +815,10 @@ function LocationRequirementsForm({
 
                 <SelectContent>
                   {CURRENCIES.map((currency) => (
-                    <SelectItem key={currency} value={currency}>
+                    <SelectItem
+                      key={currency}
+                      value={currency}
+                    >
                       {currency}
                     </SelectItem>
                   ))}
@@ -686,7 +847,9 @@ function LocationRequirementsForm({
                 type="number"
                 min="1"
                 max="500"
-                value={requirements.searchRadiusKm}
+                value={
+                  requirements.searchRadiusKm
+                }
                 onChange={(event) =>
                   updateRequirement(
                     'searchRadiusKm',
@@ -712,6 +875,7 @@ function LocationRequirementsForm({
               className="text-sm font-medium"
             >
               Additional requirements
+
               <span className="ml-1 font-normal text-muted-foreground">
                 (optional)
               </span>
@@ -719,7 +883,9 @@ function LocationRequirementsForm({
 
             <Textarea
               id="additional-requirements"
-              value={requirements.additionalRequirements}
+              value={
+                requirements.additionalRequirements
+              }
               onChange={(event) =>
                 updateRequirement(
                   'additionalRequirements',
@@ -734,12 +900,16 @@ function LocationRequirementsForm({
 
             <div className="flex justify-between gap-3 text-xs text-muted-foreground">
               <span>
-                Describe anything not already detected by the
-                Director Agent.
+                Describe anything not already detected by
+                the Director Agent.
               </span>
 
               <span className="shrink-0 tabular-nums">
-                {requirements.additionalRequirements.length}/500
+                {
+                  requirements
+                    .additionalRequirements.length
+                }
+                /500
               </span>
             </div>
           </div>
@@ -778,12 +948,15 @@ function LocationRequirementsForm({
                   <SelectItem value="Interior">
                     Interior
                   </SelectItem>
+
                   <SelectItem value="Exterior">
                     Exterior
                   </SelectItem>
+
                   <SelectItem value="Interior/Exterior">
                     Interior and exterior
                   </SelectItem>
+
                   <SelectItem value="Either">
                     Either
                   </SelectItem>
@@ -801,7 +974,9 @@ function LocationRequirementsForm({
               </label>
 
               <Select
-                value={requirements.permitPreference}
+                value={
+                  requirements.permitPreference
+                }
                 onValueChange={(value) =>
                   updateRequirement(
                     'permitPreference',
@@ -817,9 +992,11 @@ function LocationRequirementsForm({
                   <SelectItem value="any">
                     No preference
                   </SelectItem>
+
                   <SelectItem value="permit-free-preferred">
                     Permit-free preferred
                   </SelectItem>
+
                   <SelectItem value="permit-free-required">
                     Permit-free required
                   </SelectItem>
@@ -833,7 +1010,9 @@ function LocationRequirementsForm({
               </label>
 
               <Select
-                value={requirements.practicalOrStudio}
+                value={
+                  requirements.practicalOrStudio
+                }
                 onValueChange={(value) =>
                   updateRequirement(
                     'practicalOrStudio',
@@ -849,9 +1028,11 @@ function LocationRequirementsForm({
                   <SelectItem value="either">
                     Practical location or studio
                   </SelectItem>
+
                   <SelectItem value="practical">
                     Practical location only
                   </SelectItem>
+
                   <SelectItem value="studio">
                     Studio or constructed set
                   </SelectItem>
@@ -886,17 +1067,21 @@ function LocationRequirementsForm({
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Parallel will search real sources, then the Location
-            Agent will evaluate and rank the candidates.
+            Parallel will search real sources, then the
+            Location Agent will evaluate and rank the
+            candidates.
           </p>
 
           <Button
             type="button"
-            disabled={searchDisabled || isSearching}
+            disabled={
+              searchDisabled || isSearching
+            }
             onClick={() => void onSearch()}
             className="shrink-0 bg-amber text-amber-foreground hover:bg-amber/90"
           >
             <Search className="size-4" />
+
             {isSearching
               ? 'Searching and evaluating...'
               : `Find locations for Scene ${scene.scene_number}`}
@@ -940,6 +1125,7 @@ function PreSearchMap({
         />
 
         <div className="absolute left-[18%] top-[24%] size-28 rounded-full border border-primary/20" />
+
         <div className="absolute bottom-[20%] right-[12%] size-44 rounded-full border border-amber/15" />
 
         <div className="relative mx-6 max-w-sm rounded-2xl border border-white/10 bg-black/45 p-6 text-center shadow-2xl backdrop-blur-md">
@@ -953,7 +1139,9 @@ function PreSearchMap({
 
           <p className="mt-2 text-xs leading-relaxed text-white/60">
             {region.trim()
-              ? `CinePilot will search within ${radius || '50'} km of ${region}.`
+              ? `CinePilot will search within ${
+                  radius || '50'
+                } km of ${region}.`
               : 'Enter a preferred region to define the center of the search.'}
           </p>
 
