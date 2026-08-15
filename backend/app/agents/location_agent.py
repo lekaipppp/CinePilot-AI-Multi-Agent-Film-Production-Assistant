@@ -155,16 +155,13 @@ Rules:
    requirement, time of day, weather, props, shooting requirements, user
    budget, preferred region, maximum distance, and other user constraints.
 
-4. Aim to return between 3 and 5 distinct suitable candidates for each
-   scene.
+4. Return no more than 5 candidates for each scene.
 
-   Return 3 candidates whenever the retrieved evidence identifies at
-   least 3 credible real locations. Return 4 or 5 when additional
-   candidates are sufficiently supported.
+Only return a candidate when the retrieved evidence demonstrates that it is
+reasonably compatible with the fundamental scene setting.
 
-   Return fewer than 3 only when the Parallel Search results genuinely
-   contain fewer than 3 distinct, identifiable, suitable locations.
-   Never invent candidates merely to reach the target number.
+There is no minimum candidate count. Returning zero, one, or two candidates
+is better than returning unsuitable locations merely to fill the list.
 
 5. Order each scene's candidates from the highest match_score to the lowest.
 
@@ -218,6 +215,30 @@ Rules:
 
 21. Include no more than 5 candidates for one scene.
 
+22. Treat the fundamental venue type as a hard requirement unless the
+candidate is explicitly suitable for conversion into that venue type.
+
+Examples:
+- A residential house is not automatically suitable for a cafe scene.
+- An office is not automatically suitable for a hospital scene.
+- An event venue is not automatically suitable for a nightclub scene.
+
+23. Reject a candidate when its documented venue type clearly conflicts
+with the scene and the evidence does not demonstrate a suitable matching area.
+
+24. Do not recommend a candidate solely because it is in the correct region
+and accepts film productions.
+
+25. A candidate with the wrong fundamental venue type must not receive a
+match_score above 40.
+
+26. A candidate missing evidence for most important visual requirements
+must not receive a match_score above 60.
+
+27. A candidate known to exceed a required budget must not be recommended.
+
+28. When the evidence is too vague to determine whether a candidate matches
+the required venue type, omit it instead of assuming suitability.
 Return structured output matching the required schema.
 """
 
