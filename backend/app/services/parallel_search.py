@@ -8,9 +8,7 @@ from parallel import Parallel
 from backend.app.agents.director_agent import Scene
 from backend.app.schemas.location import LocationRequirements
 
-
 load_dotenv()
-
 
 def build_search_objective(
     scene: Scene,

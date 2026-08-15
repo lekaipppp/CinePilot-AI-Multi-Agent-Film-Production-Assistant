@@ -89,6 +89,16 @@ class Scene(BaseModel):
         description="Evidence from the source material supporting the scene details"
     )
 
+    location_features: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Visible architectural and environmental features required "
+            "when selecting a filming location, such as floor-to-ceiling "
+            "windows, wooden booths, rooftop access, industrial walls, "
+            "or a view of a busy street"
+        ),
+    )
+
 
 class ScriptRubric(BaseModel):
     scenes: List[Scene] = Field(
@@ -144,6 +154,14 @@ Rules:
 12. Every extracted character, prop, weather condition, and shooting
     requirement must be supported by the screenplay. Include short supporting
     excerpts in source_evidence. Never invent missing information.
+
+13. Extract location-specific visual and architectural requirements into
+location_features. Include features that materially affect location scouting,
+such as floor-to-ceiling windows, booths, street views, staircases, rooftops,
+large open spaces, period architecture, or waterfront access.
+
+Do not include movable props in location_features.
+Every feature must be supported by the screenplay.
 
 Return structured output matching the required schema.
 """
