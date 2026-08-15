@@ -37,13 +37,20 @@ def build_search_objective(
         else "No filming date specified"
     )
 
+    location_features = (
+        ", ".join(scene.location_features)
+        if scene.location_features
+        else "No specific visual features identified"
+    )
+    
     return f"""
 Find real, currently identifiable filming-location candidates for Scene
 {scene.scene_number} near {requirements.preferred_region}.
 
 Scene information:
 - Scene heading: {scene.scene_heading}
-- Required setting: {scene.location_setting or "Unspecified"}
+- Fundamental venue type: {scene.location_setting or "Unspecified"}
+- Required visual and architectural features: {location_features}
 - Interior or exterior: {scene.interior_exterior}
 - Time of day: {scene.time_of_day or "Unspecified"}
 - Weather: {scene.weather_of_scene or "Unspecified"}
@@ -60,47 +67,77 @@ User requirements:
 - Filming date: {filming_date}
 - Additional requirements: {additional_requirements}
 
-Find at least 5 distinct, real, individually identifiable location
-candidates when sufficient public evidence exists.
+Search primarily for locations whose fundamental venue type matches the
+scene. For example, when the scene requires a cafe, prioritize actual cafes,
+restaurants with cafe-compatible interiors, cafe sets, or studios explicitly
+advertising cafe sets.
 
-Each candidate must have its own public name or listing title and source
-URL. Do not treat a general city, region, search-results page, or article
-about several unnamed places as one candidate.
+Do not substitute houses, apartments, offices, or unrelated event spaces
+merely because they accept film productions.
 
-Prioritize real venues, properties, studios, tourism or film-commission
-listings, location directories, event-space listings, and production
-rental listings.
+Prefer dedicated venue pages and individual rental listings over general
+articles containing lists of loosely related properties.
 
-Look for evidence concerning each candidate's appearance, address,
-filming suitability, rental information, permit information,
-accessibility, amenities, and contact details.
+Find up to 5 strong candidates. Returning fewer candidates is acceptable
+when the evidence does not support enough suitable locations.
 
-Candidates do not need to publish every detail to be considered. Missing
-price, availability, coordinates, or amenities may be returned as
-unknown later. Do not invent missing information.
+For every candidate, look for evidence of:
+- correct venue type;
+- required visual features;
+- filming or rental permission;
+- address or identifiable area;
+- price or contact information;
+- production amenities.
+
+Do not invent missing information.
 """.strip()
-
 
 def build_search_queries(
     scene: Scene,
     requirements: LocationRequirements,
 ) -> list[str]:
 
-    region = requirements.preferred_region
+    region = requirements.preferred_region.strip()
 
     setting = (
         scene.location_setting
         or scene.scene_heading
         or "filming location"
-    )
+    ).strip()
 
-    location_type = requirements.location_type
+    features = " ".join(scene.location_features[:3])
+
+    production_type = {
+        "practical": "real venue",
+        "studio": "film studio set",
+        "either": "filming location",
+    }[requirements.location_type]
+
+    queries = [
+        (
+            f'"{setting}" {features} '
+            f'filming location rental "{region}"'
+        ),
+        (
+            f'{production_type} "{setting}" '
+            f'film production "{region}"'
+        ),
+        (
+            f'"{setting}" photo shoot film rental '
+            f'production venue "{region}"'
+        ),
+    ]
+
+    if requirements.maximum_day_rate:
+        queries.append(
+            f'"{setting}" filming rental price "{region}"'
+        )
 
     return [
-        f"{setting} venue {region}",
-        f"filming locations rental {region}",
-        f"{location_type} film location {region}",
+        " ".join(query.split())
+        for query in queries
     ]
+
 
 def execute_parallel_search(
         objective: str,
