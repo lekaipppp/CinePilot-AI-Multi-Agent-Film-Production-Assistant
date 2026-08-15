@@ -4,10 +4,13 @@ from backend.app.agents.location_agent import LocationAgentOutput
 from backend.app.schemas.location import LocationSearchRequest
 from backend.app.services.location_runner import location_runner
 from backend.app.services.parallel_search import search_location_candidates
-
+import logging
 from backend.app.services.geocoding import (
     add_coordinates_to_locations
 )
+
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -57,9 +60,11 @@ async def search_locations(
         ) from error
 
     except Exception as error:
+        logger.exception("Unexpected location pipeline error")
+
         raise HTTPException(
             status_code=500,
-            detail="Unexpected location pipeline error.",
+            detail=f"Unexpected location pipeline error: {error}",
         ) from error
 
 

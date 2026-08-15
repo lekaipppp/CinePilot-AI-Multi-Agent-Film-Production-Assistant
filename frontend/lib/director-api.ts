@@ -9,6 +9,7 @@ export type DirectorScene = {
   props_in_scene: string[]
   shooting_requirements: string[]
   source_evidence: string[]
+  location_features: string[]
 }
 
 export type DirectorAnalysis = {

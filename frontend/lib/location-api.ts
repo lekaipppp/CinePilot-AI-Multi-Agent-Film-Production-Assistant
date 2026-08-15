@@ -1,7 +1,8 @@
 import type { DirectorScene } from '@/lib/director-api'
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000'
+  process.env.NEXT_PUBLIC_API_URL ??
+  'http://localhost:8000/api/v1'
 
 export type LocationRequirementsPayload = {
   preferred_region: string
@@ -66,7 +67,7 @@ export async function searchLocations(
   request: LocationSearchRequest,
 ): Promise<LocationAgentOutput> {
   const response = await fetch(
-    `${API_BASE_URL}/api/v1/locations/search`,
+    `${API_BASE_URL}/locations/search`,
     {
       method: 'POST',
       headers: {
