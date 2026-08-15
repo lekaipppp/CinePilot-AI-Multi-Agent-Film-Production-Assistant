@@ -5,6 +5,9 @@ from backend.app.schemas.location import LocationSearchRequest
 from backend.app.services.location_runner import location_runner
 from backend.app.services.parallel_search import search_location_candidates
 
+from backend.app.services.geocoding import (
+    add_coordinates_to_locations
+)
 
 router = APIRouter()
 
@@ -26,15 +29,19 @@ async def search_locations(
         )
 
         location_result = await location_runner(
-            #model_dump is a built-in method that converts a Pydantic model instance into a standard Python dictionary(dict)
             director_analysis=request.scene.model_dump(),
-
             user_requirements=(
                 request.user_requirements.model_dump(mode="json")
             ),
             parallel_results=parallel_results,
-            user_id = request.user_id,
+            user_id=request.user_id,
         )
+
+        location_result = await add_coordinates_to_locations(
+            location_result=location_result,
+            preferred_region=requirements.preferred_region,
+        )
+
         return location_result
 
     except ValueError as error:
