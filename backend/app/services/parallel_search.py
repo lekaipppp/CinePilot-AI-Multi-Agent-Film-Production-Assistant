@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from typing import Any
-
+import re
 from dotenv import load_dotenv
 from parallel import Parallel
 
@@ -316,8 +316,22 @@ async def search_location_candidates(
         search_response
     )
 
+    print("\n========== PARALLEL RESULTS ==========")
+
+    for index, result in enumerate(results, start=1):
+
+        print(f"\nRESULT {index}")
+        print(f"Title: {result['title']}")
+        print(f"URL: {result['url']}")
+
+        for excerpt in result["excerpts"]:
+            print(f"Excerpt: {excerpt}")
+
+    print("\n======================================")
+
     if not results:
-        raise RuntimeError(
+        raise RuntimeError
+    (
             "Parallel Search returned no usable location sources."
         )
 
