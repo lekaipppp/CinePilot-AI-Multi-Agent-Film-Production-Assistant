@@ -8,7 +8,6 @@ from google.adk.sessions import InMemorySessionService
 APP_NAME = "cinepilot"
 OUTPUT_KEY = "extracted_data"
 
-
 async def run_director_agent(
         screenplay_text: str,
         user_id: str= "test_user",

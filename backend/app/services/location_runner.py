@@ -46,9 +46,9 @@ async def location_runner(
 
     #we need to combine all information needed for evaludation
     input_data = {
-        "director_analysis" : director_analysis,
-        "user_requirements" : user_requirements,
-        "parallel_search_results" : parallel_results,
+        "scene":director_analysis,
+        "user_requirement":user_requirements,
+        "parallel_search_results":parallel_results,
     }
 
     formatted_input = json.dumps(
