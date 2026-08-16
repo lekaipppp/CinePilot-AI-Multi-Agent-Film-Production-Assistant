@@ -1,18 +1,221 @@
 import asyncio
 import logging
 import os
-from typing import Any
 import re
+from typing import Any
+
 from dotenv import load_dotenv
 from parallel import Parallel
 
 from backend.app.agents.director_agent import Scene
 from backend.app.schemas.location import LocationRequirements
 
-
 load_dotenv()
 
+# Logging.getLogger() uses a hierarchical tree structure by dots
 logger = logging.getLogger(__name__)
+
+def compact_search_region(region: str) -> str:
+    """
+    Convert a detailed address into a concise search region.
+
+    Examples:
+        "200 Broadway, New York, NY 10038, USA"
+        becomes:
+        "New York"
+
+        "Bratislava, Slovakia"
+        becomes:
+        "Bratislava"
+    """
+
+    normalized_region = " ".join(region.split())
+
+    parts = [
+        part.strip()
+        for part in normalized_region.split(",")
+        if part.strip()
+    ]
+
+    if not parts:
+        return normalized_region
+
+    first_part_contains_number = any(
+        character.isdigit()
+        for character in parts[0]
+    )
+
+    # If the first part looks like a street address,
+    # the second part is normally the city.
+    if first_part_contains_number and len(parts) >= 2:
+        return parts[1]
+
+    # Otherwise, use the first region component.
+    return parts[0]
+
+
+def clean_fallback_venue_term(value: str) -> str:
+    """
+    Remove screenplay formatting from a fallback venue description.
+
+    Example:
+        "INT. ABANDONED TRAIN PLATFORM - NIGHT"
+        becomes:
+        "abandoned train platform"
+    """
+
+    cleaned_value = re.sub(
+        r"\b(?:INT|EXT|INT/EXT|EXT/INT)\b\.?",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove screenplay time-of-day information.
+    cleaned_value = re.split(
+        r"\s+-\s+",
+        cleaned_value,
+        maxsplit=1,
+    )[0]
+
+    cleaned_value = " ".join(
+        cleaned_value.split()
+    ).strip()
+
+    if not cleaned_value:
+        return "filming location"
+
+    # Keep fallback searches concise.
+    words = cleaned_value.split()
+
+    return " ".join(words[:4]).lower()
+
+
+def get_search_venue_terms(
+    scene: Scene,
+) -> tuple[str, str]:
+    """
+    Convert screenplay descriptions into common web-search terms.
+
+    Returns:
+        A primary venue term and an alternative venue term.
+    """
+
+    scene_text = " ".join(
+        filter(
+            None,
+            [
+                scene.location_setting,
+                scene.scene_heading,
+            ],
+        )
+    ).lower()
+
+    venue_mapping = [
+        (
+            ("cafe", "café", "coffee shop"),
+            ("cafe", "coffee shop"),
+        ),
+        (
+            ("restaurant", "diner"),
+            ("restaurant", "dining venue"),
+        ),
+        (
+            ("office", "workplace"),
+            ("office", "office space"),
+        ),
+        (
+            ("hospital", "medical center", "clinic"),
+            ("hospital", "medical facility"),
+        ),
+        (
+            ("warehouse", "industrial building"),
+            ("warehouse", "industrial venue"),
+        ),
+        (
+            ("apartment", "flat"),
+            ("apartment", "residential interior"),
+        ),
+        (
+            ("house", "home", "residence"),
+            ("house", "residential property"),
+        ),
+        (
+            ("bar", "pub", "nightclub"),
+            ("bar", "nightlife venue"),
+        ),
+        (
+            ("hotel", "motel"),
+            ("hotel", "hospitality venue"),
+        ),
+        (
+            ("school", "classroom", "university"),
+            ("school", "education venue"),
+        ),
+        (
+            ("alley", "backstreet"),
+            ("urban alley", "city alley"),
+        ),
+        (
+            ("rooftop", "roof terrace"),
+            ("rooftop", "roof terrace"),
+        ),
+        (
+            ("park", "garden"),
+            ("public park", "outdoor garden"),
+        ),
+        (
+            ("theater", "theatre", "auditorium"),
+            ("theater", "performance venue"),
+        ),
+        (
+            ("church", "chapel"),
+            ("church", "religious venue"),
+        ),
+        (
+            ("airport", "terminal"),
+            ("airport terminal", "aviation venue"),
+        ),
+        (
+            ("train station", "railway station"),
+            ("train station", "railway platform"),
+        ),
+        (
+            ("subway", "metro station"),
+            ("subway station", "metro platform"),
+        ),
+        (
+            ("beach", "coast"),
+            ("beach", "coastal location"),
+        ),
+        (
+            ("forest", "woods"),
+            ("forest", "woodland location"),
+        ),
+        (
+            ("farm", "barn"),
+            ("farm", "rural property"),
+        ),
+    ]
+
+    for keywords, search_terms in venue_mapping:
+        if any(
+            keyword in scene_text
+            for keyword in keywords
+        ):
+            return search_terms
+
+    fallback_value = (
+        scene.location_setting
+        or scene.scene_heading
+        or "filming location"
+    )
+
+    fallback_term = clean_fallback_venue_term(
+        fallback_value
+    )
+
+    return fallback_term, fallback_term
 
 
 def build_search_objective(
@@ -20,111 +223,141 @@ def build_search_objective(
     requirements: LocationRequirements,
 ) -> str:
     """
-    Convert the scene analysis and user requirements into a
-    detailed research objective for Parallel Search.
+    Build a focused and self-contained Parallel Search objective.
+
+    The objective tells Parallel what evidence should be prioritized.
+    It does not replace the Location Agent's final evaluation.
     """
 
-    shooting_requirements = (
-        ", ".join(scene.shooting_requirements)
-        if scene.shooting_requirements
-        else "No special shooting requirements specified"
+    primary_venue, alternative_venue = (
+        get_search_venue_terms(scene)
     )
 
-    location_features = (
+    effective_environment = (
+        requirements.environment
+        if requirements.environment != "Either"
+        else scene.interior_exterior
+    )
+
+    visual_features = (
         ", ".join(scene.location_features)
         if scene.location_features
-        else "No specific visual or architectural features identified"
+        else "No specific visual features documented"
+    )
+
+    production_requirements = (
+        ", ".join(scene.shooting_requirements)
+        if scene.shooting_requirements
+        else "No special production requirements"
     )
 
     additional_requirements = (
         requirements.additional_requirements.strip()
         if requirements.additional_requirements.strip()
-        else "No additional user requirements"
+        else "None"
     )
 
     filming_date = (
         requirements.filming_date.isoformat()
         if requirements.filming_date
-        else "No filming date specified"
+        else "Not specified"
     )
 
+    if requirements.location_type == "practical":
+        location_type_instruction = (
+            "Find practical, real-world venues. Exclude ordinary "
+            "photo studios and lifestyle lofts unless the page "
+            "clearly documents a permanent physical environment "
+            "matching the required venue."
+        )
+
+    elif requirements.location_type == "studio":
+        location_type_instruction = (
+            "Find studios or purpose-built production sets that "
+            "explicitly reproduce the required physical environment."
+        )
+
+    else:
+        location_type_instruction = (
+            "Both practical venues and purpose-built studio sets "
+            "are acceptable. The source should make the location "
+            "type identifiable."
+        )
+
     return f"""
-Find real, currently identifiable filming-location candidates for Scene
-{scene.scene_number} near {requirements.preferred_region}.
+Find identifiable filming-location candidates for a {primary_venue} or
+compatible {alternative_venue} near {requirements.preferred_region}.
 
-SCENE REQUIREMENTS
+SCENE NEEDS
 
-- Scene heading: {scene.scene_heading}
-- Fundamental venue type: {scene.location_setting or "Unspecified"}
-- Required visual and architectural features: {location_features}
-- Interior or exterior: {scene.interior_exterior}
-- Time of day: {scene.time_of_day or "Unspecified"}
-- Weather visible or affecting the scene:
-  {scene.weather_of_scene or "Unspecified"}
-- Special shooting requirements: {shooting_requirements}
+- Scene: {scene.scene_heading}
+- Required venue type: {primary_venue}
+- Compatible venue term: {alternative_venue}
+- Required environment: {effective_environment}
+- Visual and architectural features: {visual_features}
+- Production requirements: {production_requirements}
+- Additional user requirements: {additional_requirements}
 
 USER CONSTRAINTS
 
-- Preferred filming region: {requirements.preferred_region}
-- Maximum distance from region:
-  {requirements.maximum_distance_km} km
-- Maximum location day rate:
-  {requirements.maximum_day_rate} {requirements.currency}
-- Environment preference: {requirements.environment}
+- Search center: {requirements.preferred_region}
+- Maximum distance: {requirements.maximum_distance_km} km
+- Maximum day rate: {requirements.maximum_day_rate}
+  {requirements.currency}
 - Permit preference: {requirements.permit_preference}
-- Required location type: {requirements.location_type}
 - Preferred filming date: {filming_date}
-- Additional requirements: {additional_requirements}
 
-SEARCH PRIORITIES
+LOCATION-TYPE REQUIREMENT
 
-Search primarily for locations whose fundamental venue type matches the
-scene.
+{location_type_instruction}
 
-For example, if the scene requires a cafe, prioritize:
+SOURCE PRIORITIES
 
-- actual cafes that publicly support filming or private rental;
-- restaurants with cafe-compatible interiors;
-- production venues with an identifiable cafe area;
-- studios explicitly advertising a cafe set.
-
-Do not substitute houses, apartments, offices, or unrelated event spaces
-merely because they accept film productions.
-
-A candidate located in the correct region is not automatically suitable.
-Its documented appearance and venue type must also match the scene.
-
-Prefer:
+Prioritize:
 
 1. Dedicated pages for individual venues.
 2. Individual film-location or production-rental listings.
-3. Official venue websites containing filming, event, or contact details.
+3. Official venue websites mentioning filming, production, private rental,
+   events, or commercial photography.
 4. Reputable location directories and film-commission listings.
 
-Avoid relying primarily on:
+Each result should identify one named venue or property whenever possible.
 
-1. General articles listing loosely related properties.
-2. Search-result pages without information about individual venues.
-3. Travel articles that do not provide filming or rental evidence.
-4. Unnamed or unidentifiable locations.
+VENUE VERIFICATION
 
-Find up to five strong candidates. Returning fewer candidates is acceptable
-when sufficient evidence does not exist.
+Do not treat a word appearing in a business name as proof of venue type.
+Verify the venue type using the page category, description, documented
+physical features, or photographs.
 
-For each candidate, look for public evidence concerning:
+For example, a business named "Cafe Studio" is not necessarily an actual
+cafe. A normal loft or photo studio should not be presented as a cafe
+unless its description or images document a cafe environment.
 
-- exact venue or property name;
-- correct venue type;
-- required visual or architectural features;
+EVIDENCE TO RETRIEVE
+
+Prefer pages containing evidence about:
+
+- actual venue category;
+- physical and architectural appearance;
 - address or identifiable area;
-- filming, production, event, or private-rental permission;
-- advertised price or contact-for-price information;
+- filming, production, event, or private-rental use;
+- advertised price and price unit;
+- capacity;
 - production amenities;
-- accessibility and load-in information;
-- permit or availability information;
-- an individual source URL.
+- equipment and crew access;
+- permits;
+- availability;
+- photographs or gallery links.
 
-Do not invent missing information. Missing details may remain unknown.
+AVOID
+
+Avoid general travel articles, unnamed properties, generic search-result
+pages, and list articles that provide no usable information about an
+individual venue.
+
+Missing price, permit, capacity, or availability information should remain
+unknown. Do not remove an otherwise relevant venue solely because one of
+these details is not publicly documented.
 """.strip()
 
 
@@ -133,35 +366,43 @@ def build_search_queries(
     requirements: LocationRequirements,
 ) -> list[str]:
     """
-    Build three concise and diverse keyword queries.
+    Build three concise and diverse search queries.
 
-    Detailed constraints belong in the objective. These queries help
-    Parallel discover relevant categories of webpages.
+    Detailed constraints belong in the objective. Search queries
+    should concentrate on discovering relevant webpages.
     """
 
-    region = requirements.preferred_region.strip()
+    region = compact_search_region(
+        requirements.preferred_region
+    )
 
-    setting = (
-        scene.location_setting
-        or scene.scene_heading
-        or "filming location"
-    ).strip()
+    primary_venue, alternative_venue = (
+        get_search_venue_terms(scene)
+    )
 
     if requirements.location_type == "studio":
-        third_query = f"{setting} studio set {region}"
+        queries = [
+            f"{primary_venue} film set {region}",
+            f"{alternative_venue} studio rental {region}",
+            f"{primary_venue} production set {region}",
+        ]
 
     elif requirements.location_type == "practical":
-        third_query = f"{setting} real venue filming {region}"
+        queries = [
+            f"{primary_venue} filming rental {region}",
+            f"{alternative_venue} production venue {region}",
+            f"{primary_venue} private rental {region}",
+        ]
 
     else:
-        # Search the studio/set angle as an alternative to practical venues.
-        third_query = f"{setting} film set {region}"
+        queries = [
+            f"{primary_venue} filming rental {region}",
+            f"{alternative_venue} production venue {region}",
+            f"{primary_venue} film set {region}",
+        ]
 
-    return [
-        f"{setting} filming rental {region}",
-        f"{setting} production venue {region}",
-        third_query,
-    ]
+    # Remove duplicate queries while preserving their order.
+    return list(dict.fromkeys(queries))
 
 
 def execute_parallel_search(
@@ -171,8 +412,8 @@ def execute_parallel_search(
     """
     Execute the blocking Parallel SDK request.
 
-    This function is later run in a worker thread so that it does
-    not block the FastAPI event loop.
+    This function is run in a worker thread so the synchronous
+    Parallel SDK does not block FastAPI's event loop.
     """
 
     api_key = os.getenv("PARALLEL_API_KEY")
@@ -196,8 +437,12 @@ def normalize_search_results(
     search_response: Any,
 ) -> list[dict[str, Any]]:
     """
-    Convert Parallel SDK result objects into JSON-serializable
-    dictionaries and remove duplicate source URLs.
+    Convert Parallel result objects into JSON-serializable dictionaries.
+
+    This function also:
+    - removes results without URLs;
+    - removes duplicate URLs;
+    - removes results without usable excerpts.
     """
 
     normalized_results: list[dict[str, Any]] = []
@@ -206,31 +451,64 @@ def normalize_search_results(
     search_results = getattr(
         search_response,
         "results",
-        [],
-    )
+        None,
+    ) or []
 
     for result in search_results:
-        url = str(result.url).strip()
+        raw_url = getattr(
+            result,
+            "url",
+            None,
+        )
 
-        if not url or url in seen_urls:
+        if not raw_url:
             continue
+
+        url = str(raw_url).strip()
+
+        if not url:
+            continue
+
+        # Treat URLs with and without a final slash as duplicates.
+        normalized_url = url.rstrip("/")
+
+        if normalized_url in seen_urls:
+            continue
+
+        raw_excerpts = getattr(
+            result,
+            "excerpts",
+            None,
+        ) or []
 
         excerpts = [
             str(excerpt).strip()
-            for excerpt in (result.excerpts or [])
+            for excerpt in raw_excerpts
             if str(excerpt).strip()
         ]
 
-        # Results without excerpts do not give the Location Agent
-        # enough evidence to evaluate a candidate safely.
+        # Without excerpts, the Location Agent has no evidence
+        # with which to evaluate the source.
         if not excerpts:
             continue
 
-        seen_urls.add(url)
+        raw_title = getattr(
+            result,
+            "title",
+            None,
+        )
+
+        title = (
+            str(raw_title).strip()
+            if raw_title
+            else "Untitled location source"
+        )
+
+        seen_urls.add(normalized_url)
 
         normalized_results.append(
             {
-                "title": str(result.title).strip(),
+                "title": title,
                 "url": url,
                 "excerpts": excerpts,
             }
@@ -245,7 +523,10 @@ def log_search_results(
     results: list[dict[str, Any]],
 ) -> None:
     """
-    Log raw Parallel results for development and debugging.
+    Log the Parallel request and normalized results.
+
+    The print output is intentionally visible in the backend terminal
+    while developing and testing the location pipeline.
     """
 
     logger.info(
@@ -259,23 +540,40 @@ def log_search_results(
     )
 
     logger.info(
-        "Parallel returned %s source pages.",
+        "Parallel returned %s usable source pages.",
         len(results),
     )
 
-    for index, result in enumerate(results, start=1):
-        logger.info(
-            "Parallel result %s: %s | %s",
-            index,
-            result["title"],
-            result["url"],
-        )
+    print("\n========== PARALLEL SEARCH ==========")
+    print("\nSEARCH QUERIES")
 
-        logger.debug(
-            "Parallel result %s excerpts: %s",
-            index,
+    for index, query in enumerate(
+        search_queries,
+        start=1,
+    ):
+        print(f"{index}. {query}")
+
+    print(
+        f"\nUSABLE RESULTS: {len(results)}"
+    )
+
+    for index, result in enumerate(
+        results,
+        start=1,
+    ):
+        print(f"\nRESULT {index}")
+        print(f"Title: {result['title']}")
+        print(f"URL: {result['url']}")
+
+        for excerpt_index, excerpt in enumerate(
             result["excerpts"],
-        )
+            start=1,
+        ):
+            print(
+                f"Excerpt {excerpt_index}: {excerpt}"
+            )
+
+    print("\n=====================================")
 
 
 async def search_location_candidates(
@@ -283,11 +581,11 @@ async def search_location_candidates(
     requirements: LocationRequirements,
 ) -> list[dict[str, Any]]:
     """
-    Search for real filming-location candidates using:
+    Search for filming-location source pages using:
 
-    1. Scene information from the Director Agent.
-    2. Production constraints entered by the user.
-    3. Current public webpages retrieved through Parallel.
+    1. Scene information produced by the Director Agent.
+    2. Location requirements supplied by the user.
+    3. Current public webpages retrieved through Parallel Search.
     """
 
     objective = build_search_objective(
@@ -300,6 +598,11 @@ async def search_location_candidates(
         requirements=requirements,
     )
 
+    if not search_queries:
+        raise RuntimeError(
+            "No location search queries could be generated."
+        )
+
     try:
         search_response = await asyncio.to_thread(
             execute_parallel_search,
@@ -308,6 +611,10 @@ async def search_location_candidates(
         )
 
     except Exception as error:
+        logger.exception(
+            "Parallel location search failed."
+        )
+
         raise RuntimeError(
             f"Parallel location search failed: {error}"
         ) from error
@@ -316,29 +623,15 @@ async def search_location_candidates(
         search_response
     )
 
-    print("\n========== PARALLEL RESULTS ==========")
-
-    for index, result in enumerate(results, start=1):
-
-        print(f"\nRESULT {index}")
-        print(f"Title: {result['title']}")
-        print(f"URL: {result['url']}")
-
-        for excerpt in result["excerpts"]:
-            print(f"Excerpt: {excerpt}")
-
-    print("\n======================================")
-
-    if not results:
-        raise RuntimeError
-    (
-            "Parallel Search returned no usable location sources."
-        )
-
     log_search_results(
         objective=objective,
         search_queries=search_queries,
         results=results,
     )
+
+    if not results:
+        raise RuntimeError(
+            "Parallel Search returned no usable location sources."
+        )
 
     return results
