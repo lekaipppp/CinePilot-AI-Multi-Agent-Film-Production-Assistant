@@ -17,16 +17,12 @@ logger = logging.getLogger(__name__)
 
 def compact_search_region(region: str) -> str:
     """
-    Convert a detailed address into a concise search region.
+    Convert a detailed address into a search-friendly region
+    without losing too much geographic context.
 
-    Examples:
+    Example:
         "200 Broadway, New York, NY 10038, USA"
-        becomes:
-        "New York"
-
-        "Bratislava, Slovakia"
-        becomes:
-        "Bratislava"
+        -> "New York City, NY"
     """
 
     normalized_region = " ".join(region.split())
@@ -45,14 +41,30 @@ def compact_search_region(region: str) -> str:
         for character in parts[0]
     )
 
-    # If the first part looks like a street address,
-    # the second part is normally the city.
-    if first_part_contains_number and len(parts) >= 2:
-        return parts[1]
+    # Full street address:
+    # "200 Broadway, New York, NY 10038, USA"
+    if first_part_contains_number and len(parts) >= 3:
+        city = parts[1]
+        state = parts[2]
 
-    # Otherwise, use the first region component.
+        # Special case because "New York" is ambiguous in search.
+        if city.lower() == "new york":
+            return "New York City, NY"
+
+        return f"{city}, {state}"
+
+    # User entered something like:
+    # "New York, NY, USA"
+    if len(parts) >= 2:
+        city = parts[0]
+        state = parts[1]
+
+        if city.lower() == "new york":
+            return "New York City, NY"
+
+        return f"{city}, {state}"
+
     return parts[0]
-
 
 def clean_fallback_venue_term(value: str) -> str:
     """
@@ -218,15 +230,38 @@ def get_search_venue_terms(
     return fallback_term, fallback_term
 
 
+def get_visual_search_terms(
+    scene: Scene,
+    max_features: int = 2,
+) -> str:
+    """
+    Return a small number of screenplay-derived visual features
+    that are useful for venue discovery.
+
+    We intentionally keep this short because very long search
+    queries reduce retrieval quality.
+    """
+
+    features = [
+        feature.strip()
+        for feature in scene.location_features
+        if feature.strip()
+    ]
+
+    return " ".join(features[:max_features])
+
+
 def build_search_objective(
     scene: Scene,
     requirements: LocationRequirements,
 ) -> str:
     """
-    Build a focused and self-contained Parallel Search objective.
+    Build an objective focused primarily on discovering real,
+    physically appropriate venues.
 
-    The objective tells Parallel what evidence should be prioritized.
-    It does not replace the Location Agent's final evaluation.
+    Production details such as price, permits, and exact
+    availability are useful evidence, but should not prevent
+    discovery of an otherwise promising venue.
     """
 
     primary_venue, alternative_venue = (
@@ -245,119 +280,65 @@ def build_search_objective(
         else "No specific visual features documented"
     )
 
-    production_requirements = (
-        ", ".join(scene.shooting_requirements)
-        if scene.shooting_requirements
-        else "No special production requirements"
-    )
-
     additional_requirements = (
         requirements.additional_requirements.strip()
         if requirements.additional_requirements.strip()
         else "None"
     )
 
-    filming_date = (
-        requirements.filming_date.isoformat()
-        if requirements.filming_date
-        else "Not specified"
-    )
-
-    if requirements.location_type == "practical":
-        location_type_instruction = (
-            "Find practical, real-world venues. Exclude ordinary "
-            "photo studios and lifestyle lofts unless the page "
-            "clearly documents a permanent physical environment "
-            "matching the required venue."
-        )
-
-    elif requirements.location_type == "studio":
-        location_type_instruction = (
-            "Find studios or purpose-built production sets that "
-            "explicitly reproduce the required physical environment."
-        )
-
-    else:
-        location_type_instruction = (
-            "Both practical venues and purpose-built studio sets "
-            "are acceptable. The source should make the location "
-            "type identifiable."
-        )
-
     return f"""
-Find identifiable filming-location candidates for a {primary_venue} or
-compatible {alternative_venue} near {requirements.preferred_region}.
+Find diverse, identifiable real-world filming-location candidates near
+{requirements.preferred_region} that could visually represent the
+screenplay location below.
 
-SCENE NEEDS
+SCENE
 
 - Scene: {scene.scene_heading}
 - Required venue type: {primary_venue}
 - Compatible venue term: {alternative_venue}
-- Required environment: {effective_environment}
-- Visual and architectural features: {visual_features}
-- Production requirements: {production_requirements}
+- Environment: {effective_environment}
+- Visual / architectural features: {visual_features}
 - Additional user requirements: {additional_requirements}
 
-USER CONSTRAINTS
+PRIMARY GOAL
 
-- Search center: {requirements.preferred_region}
-- Maximum distance: {requirements.maximum_distance_km} km
-- Maximum day rate: {requirements.maximum_day_rate}
-  {requirements.currency}
-- Permit preference: {requirements.permit_preference}
-- Preferred filming date: {filming_date}
+Discover real physical venues that match the required venue type and
+appearance.
 
-LOCATION-TYPE REQUIREMENT
+Prioritize actual operating venues, properties, and clearly identifiable
+locations.
 
-{location_type_instruction}
+Return diverse named venues whenever possible rather than several pages
+about the same location.
 
 SOURCE PRIORITIES
 
-Prioritize:
+Prefer:
 
-1. Dedicated pages for individual venues.
-2. Individual film-location or production-rental listings.
-3. Official venue websites mentioning filming, production, private rental,
-   events, or commercial photography.
-4. Reputable location directories and film-commission listings.
+1. Official venue websites.
+2. Individual business or property pages.
+3. Individual location-rental listings.
+4. Reputable venue directories that clearly identify individual places.
+5. Local articles when they clearly identify specific venues.
 
-Each result should identify one named venue or property whenever possible.
+IMPORTANT
 
-VENUE VERIFICATION
+Do not require a venue to publicly list its filming price, permit status,
+or exact availability in order to include it during discovery.
 
-Do not treat a word appearing in a business name as proof of venue type.
-Verify the venue type using the page category, description, documented
-physical features, or photographs.
+Missing production information is acceptable at this stage.
 
-For example, a business named "Cafe Studio" is not necessarily an actual
-cafe. A normal loft or photo studio should not be presented as a cafe
-unless its description or images document a cafe environment.
+Avoid:
 
-EVIDENCE TO RETRIEVE
+- generic articles with no identifiable location;
+- search-result pages;
+- unnamed properties;
+- ordinary photography studios or lofts that do not physically match
+  the required venue type.
 
-Prefer pages containing evidence about:
+A word in a business name is not proof of venue type.
 
-- actual venue category;
-- physical and architectural appearance;
-- address or identifiable area;
-- filming, production, event, or private-rental use;
-- advertised price and price unit;
-- capacity;
-- production amenities;
-- equipment and crew access;
-- permits;
-- availability;
-- photographs or gallery links.
-
-AVOID
-
-Avoid general travel articles, unnamed properties, generic search-result
-pages, and list articles that provide no usable information about an
-individual venue.
-
-Missing price, permit, capacity, or availability information should remain
-unknown. Do not remove an otherwise relevant venue solely because one of
-these details is not publicly documented.
+The goal of this search is to discover a strong and diverse candidate pool.
 """.strip()
 
 
@@ -366,10 +347,11 @@ def build_search_queries(
     requirements: LocationRequirements,
 ) -> list[str]:
     """
-    Build three concise and diverse search queries.
+    Build diverse search queries for location discovery.
 
-    Detailed constraints belong in the objective. Search queries
-    should concentrate on discovering relevant webpages.
+    The goal is to first discover physically relevant real-world
+    venues, while still including a small number of production-
+    focused queries.
     """
 
     region = compact_search_region(
@@ -380,28 +362,63 @@ def build_search_queries(
         get_search_venue_terms(scene)
     )
 
+    visual_terms = get_visual_search_terms(scene)
+
+    queries: list[str] = []
+
+    # ---------------------------------------------------------
+    # 1. Basic venue discovery
+    # ---------------------------------------------------------
+    queries.append(
+        f"{primary_venue} in {region}"
+    )
+
+    # ---------------------------------------------------------
+    # 2. Alternative terminology
+    # ---------------------------------------------------------
+    if alternative_venue != primary_venue:
+        queries.append(
+            f"{alternative_venue} {region}"
+        )
+
+    # ---------------------------------------------------------
+    # 3. Screenplay visual / architectural discovery
+    # ---------------------------------------------------------
+    if visual_terms:
+        queries.append(
+            f"{primary_venue} {visual_terms} {region}"
+        )
+
+    # ---------------------------------------------------------
+    # 4. Production-specific searches
+    # ---------------------------------------------------------
     if requirements.location_type == "studio":
-        queries = [
-            f"{primary_venue} film set {region}",
-            f"{alternative_venue} studio rental {region}",
-            f"{primary_venue} production set {region}",
-        ]
+        queries.append(
+            f"{primary_venue} film set {region}"
+        )
+
+        queries.append(
+            f"{primary_venue} production studio {region}"
+        )
 
     elif requirements.location_type == "practical":
-        queries = [
-            f"{primary_venue} filming rental {region}",
-            f"{alternative_venue} production venue {region}",
-            f"{primary_venue} private rental {region}",
-        ]
+        queries.append(
+            f"{primary_venue} filming location {region}"
+        )
+
+        queries.append(
+            f"{primary_venue} private event rental {region}"
+        )
 
     else:
-        queries = [
-            f"{primary_venue} filming rental {region}",
-            f"{alternative_venue} production venue {region}",
-            f"{primary_venue} film set {region}",
-        ]
+        queries.append(
+            f"{primary_venue} filming location {region}"
+        )
 
-    # Remove duplicate queries while preserving their order.
+        queries.append(
+            f"{primary_venue} film set {region}"
+        )
+
     return list(dict.fromkeys(queries))
 
 
