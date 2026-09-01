@@ -1,16 +1,16 @@
 from fastapi import APIRouter
 
-from backend.app.api.v1 import auth, locations, screenplay
+from backend.app.api.v1 import locations, screenplay
+# from backend.app.api.v1 import auth  # 暂时禁用：auth.py 依赖的 app.database / app.models 还没写
 
 
 api_router = APIRouter()
 
-
-api_router.include_router(
-    auth.router,
-    prefix="/auth",
-    tags=["Auth"],
-)
+# api_router.include_router(
+#     auth.router,
+#     prefix="/auth",
+#     tags=["Auth"],
+# )
 
 api_router.include_router(
     screenplay.router,

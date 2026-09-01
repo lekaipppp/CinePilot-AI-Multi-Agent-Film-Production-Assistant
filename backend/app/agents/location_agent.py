@@ -243,12 +243,15 @@ VENUE-TYPE VERIFICATION
 17. Determine venue type from the retrieved page's category, description,
     documented physical environment, and other direct evidence.
 
-18. A word appearing in a venue or business name is not evidence of its
-    actual venue type.
+18a. Treat the following as disqualifying evidence for a casual cafe or
+     coffee-shop requirement, even when the venue's name contains
+     "cafe": fine dining, tasting menu, James Beard Award, sommelier,
+     reservations required, prix fixe, white-tablecloth service.
 
-    For example, a place named "Cafe Studio NYC" must not be classified
-    as a cafe unless the description or physical evidence demonstrates
-    a cafe interior.
+18b. When such evidence is present, either reject the candidate or
+     score it no higher than 40, and state in match_reason that the
+     venue's actual service style conflicts with a casual cafe
+     requirement.
 
 19. A practical cafe scene may be satisfied by:
 

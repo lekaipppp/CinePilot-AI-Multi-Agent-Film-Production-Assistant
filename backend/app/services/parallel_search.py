@@ -15,6 +15,21 @@ load_dotenv()
 # Logging.getLogger() uses a hierarchical tree structure by dots
 logger = logging.getLogger(__name__)
 
+# Domains that reliably produce generic, unnamed, or low-signal pages
+# for filming-location discovery. Excluded at the API level rather than
+# just told to the model, since a soft instruction can be ignored.
+LOW_QUALITY_DOMAINS = [
+    "pinterest.com",
+    "reddit.com",
+    "quora.com",
+    "tripadvisor.com",
+]
+
+# The model that consumes the Location Agent's search results. Passed to
+# Parallel as client_model so excerpts are formatted for this model.
+LOCATION_AGENT_MODEL = "gemini-3.5-flash-lite"
+
+
 def compact_search_region(region: str) -> str:
     """
     Convert a detailed address into a search-friendly region
@@ -65,6 +80,7 @@ def compact_search_region(region: str) -> str:
         return f"{city}, {state}"
 
     return parts[0]
+
 
 def clean_fallback_venue_term(value: str) -> str:
     """
@@ -232,14 +248,15 @@ def get_search_venue_terms(
 
 def get_visual_search_terms(
     scene: Scene,
-    max_features: int = 2,
+    max_features: int = 1,
 ) -> str:
     """
     Return a small number of screenplay-derived visual features
     that are useful for venue discovery.
 
-    We intentionally keep this short because very long search
-    queries reduce retrieval quality.
+    We intentionally keep this short (default: a single feature)
+    so each search query stays within Parallel's recommended
+    3-6 word range for keyword queries.
     """
 
     features = [
@@ -256,17 +273,14 @@ def build_search_objective(
     requirements: LocationRequirements,
 ) -> str:
     """
-    Build an objective focused primarily on discovering real,
-    physically appropriate venues.
+    Build a concise, natural-language search objective.
 
-    Production details such as price, permits, and exact
-    availability are useful evidence, but should not prevent
-    discovery of an otherwise promising venue.
+    Parallel's Search API is tuned to parse a short natural-language
+    goal naming the key entity/topic, not a long structured document
+    with headers and bullet lists. Keep this to a couple of sentences.
     """
 
-    primary_venue, alternative_venue = (
-        get_search_venue_terms(scene)
-    )
+    primary_venue, _ = get_search_venue_terms(scene)
 
     effective_environment = (
         requirements.environment
@@ -275,71 +289,26 @@ def build_search_objective(
     )
 
     visual_features = (
-        ", ".join(scene.location_features)
+        ", ".join(scene.location_features[:3])
         if scene.location_features
-        else "No specific visual features documented"
+        else "no specific visual features documented"
     )
 
     additional_requirements = (
         requirements.additional_requirements.strip()
         if requirements.additional_requirements.strip()
-        else "None"
+        else "none"
     )
 
-    return f"""
-Find diverse, identifiable real-world filming-location candidates near
-{requirements.preferred_region} that could visually represent the
-screenplay location below.
-
-SCENE
-
-- Scene: {scene.scene_heading}
-- Required venue type: {primary_venue}
-- Compatible venue term: {alternative_venue}
-- Environment: {effective_environment}
-- Visual / architectural features: {visual_features}
-- Additional user requirements: {additional_requirements}
-
-PRIMARY GOAL
-
-Discover real physical venues that match the required venue type and
-appearance.
-
-Prioritize actual operating venues, properties, and clearly identifiable
-locations.
-
-Return diverse named venues whenever possible rather than several pages
-about the same location.
-
-SOURCE PRIORITIES
-
-Prefer:
-
-1. Official venue websites.
-2. Individual business or property pages.
-3. Individual location-rental listings.
-4. Reputable venue directories that clearly identify individual places.
-5. Local articles when they clearly identify specific venues.
-
-IMPORTANT
-
-Do not require a venue to publicly list its filming price, permit status,
-or exact availability in order to include it during discovery.
-
-Missing production information is acceptable at this stage.
-
-Avoid:
-
-- generic articles with no identifiable location;
-- search-result pages;
-- unnamed properties;
-- ordinary photography studios or lofts that do not physically match
-  the required venue type.
-
-A word in a business name is not proof of venue type.
-
-The goal of this search is to discover a strong and diverse candidate pool.
-""".strip()
+    return (
+        f"Find real, individually named {primary_venue} venues near "
+        f"{requirements.preferred_region} suitable for a "
+        f"{effective_environment.lower()} filming scene with these "
+        f"features: {visual_features}. Additional requirements: "
+        f"{additional_requirements}. Prefer official venue pages and "
+        f"individual rental listings that name a specific place; avoid "
+        f"generic articles or unnamed properties."
+    ).strip()
 
 
 def build_search_queries(
@@ -347,11 +316,11 @@ def build_search_queries(
     requirements: LocationRequirements,
 ) -> list[str]:
     """
-    Build diverse search queries for location discovery.
+    Build diverse, keyword-style search queries for location discovery.
 
-    The goal is to first discover physically relevant real-world
-    venues, while still including a small number of production-
-    focused queries.
+    Each query is kept close to Parallel's recommended 3-6 word range
+    for keyword queries, and the list is capped at 5 (the API drops
+    queries after the fifth).
     """
 
     region = compact_search_region(
@@ -390,24 +359,16 @@ def build_search_queries(
         )
 
     # ---------------------------------------------------------
-    # 4. Production-specific searches
+    # 4. Production-specific search
     # ---------------------------------------------------------
     if requirements.location_type == "studio":
         queries.append(
-            f"{primary_venue} film set {region}"
-        )
-
-        queries.append(
-            f"{primary_venue} production studio {region}"
+            f"{primary_venue} film studio {region}"
         )
 
     elif requirements.location_type == "practical":
         queries.append(
-            f"{primary_venue} filming location {region}"
-        )
-
-        queries.append(
-            f"{primary_venue} private event rental {region}"
+            f"{primary_venue} rental {region}"
         )
 
     else:
@@ -415,11 +376,7 @@ def build_search_queries(
             f"{primary_venue} filming location {region}"
         )
 
-        queries.append(
-            f"{primary_venue} film set {region}"
-        )
-
-    return list(dict.fromkeys(queries))
+    return list(dict.fromkeys(queries))[:5]
 
 
 def execute_parallel_search(
@@ -446,7 +403,17 @@ def execute_parallel_search(
         objective=objective,
         search_queries=search_queries,
         mode="advanced",
-        max_chars_total=30_000,
+        client_model=LOCATION_AGENT_MODEL,
+        max_chars_total=40_000,
+        advanced_settings={
+            "max_results": 8,
+            "excerpt_settings": {
+                "max_chars_per_result": 2000,
+            },
+            "source_policy": {
+                "exclude_domains": LOW_QUALITY_DOMAINS,
+            },
+        },
     )
 
 
