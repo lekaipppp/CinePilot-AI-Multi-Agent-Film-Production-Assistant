@@ -93,7 +93,7 @@ export function DirectorWorkspace() {
 
         {scenes.length > 0 && (
           <div className="flex justify-end pt-2">
-            <Button size="lg" className="gap-2" render={<Link href="/locations" />}>
+            <Button size="lg" className="gap-2" nativeButton={false} render={<Link href="/locations" />}>
               Continue to Locations
               <ArrowRight className="size-4" />
             </Button>

@@ -15,13 +15,13 @@ import {
 import { cn } from '@/lib/utils'
 
 export function OverviewStats() {
-  const { analyzed, budgetTotal, agents } = useProduction()
+  const { analyzed, budgetResult, agents } = useProduction()
 
   const stats = [
     {
       key: 'budget',
       label: 'Budget estimate',
-      value: formatCurrency(budgetTotal, true),
+      value: formatCurrency(budgetResult?.total_estimated_amount ?? 0, true),
       sub: 'across 5 categories',
       icon: Wallet,
       href: '/budget',

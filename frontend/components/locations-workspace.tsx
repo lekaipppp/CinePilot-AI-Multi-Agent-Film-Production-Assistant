@@ -132,6 +132,8 @@ export function LocationsWorkspace() {
     selectedLocationsByScene,
     confirmLocationForScene,
     allScenesHaveSelectedLocation,
+    pendingLocationBudgetOverride,
+    clearPendingLocationBudgetOverride,
   } = useProduction()
   const scenes = directorAnalysis?.scenes ?? []
 
@@ -148,6 +150,16 @@ export function LocationsWorkspace() {
 
   const [activeSceneNumber, setActiveSceneNumber] =
     React.useState<number | null>(null)
+
+  // Whether the active scene's already-confirmed candidate list is
+  // expanded back open for reconsideration. Reset whenever the active
+  // scene changes, so scene 2 never inherits scene 1's expanded state.
+  const [isReconsidering, setIsReconsidering] =
+    React.useState(false)
+
+  React.useEffect(() => {
+    setIsReconsidering(false)
+  }, [activeSceneNumber])
 
   const [requirementsByScene, setRequirementsByScene] =
     React.useState<
@@ -178,6 +190,34 @@ export function LocationsWorkspace() {
       return next
     })
   }, [scenes])
+
+  /*
+   * When a Budget rerun tightens the locations envelope, overwrite every
+   * scene's maximumDayRate/currency with the new per-scene cap — and
+   * only those two fields, leaving region/radius/environment/every other
+   * per-scene preference the user already set untouched.
+   */
+  React.useEffect(() => {
+    if (!pendingLocationBudgetOverride) return
+
+    setRequirementsByScene((current) => {
+      const next: typeof current = {}
+
+      for (const [sceneNumber, requirements] of Object.entries(current)) {
+        next[Number(sceneNumber)] = {
+          ...requirements,
+          maximumDayRate: String(
+            Math.round(pendingLocationBudgetOverride.amount),
+          ),
+          currency: pendingLocationBudgetOverride.currency,
+        }
+      }
+
+      return next
+    })
+
+    clearPendingLocationBudgetOverride()
+  }, [pendingLocationBudgetOverride, clearPendingLocationBudgetOverride])
 
   const activeScene =
     scenes.find(
@@ -477,8 +517,33 @@ export function LocationsWorkspace() {
             </Card>
           )}
 
-          {locationResult?.scene_recommendations.map(
-            (recommendation) => (
+          {locationResult?.scene_recommendations
+            .filter(
+              (recommendation) =>
+                // A search result stays in state until the next search
+                // runs, but it should only ever be shown while its scene
+                // is the one on screen — otherwise switching scenes still
+                // shows the previous scene's stale recommendation card.
+                recommendation.scene_number ===
+                activeScene.scene_number,
+            )
+            .map(
+            (recommendation) => {
+              const isActiveRecommendation =
+                recommendation.scene_number ===
+                activeScene.scene_number
+
+              const confirmedCandidate =
+                selectedLocationsByScene[
+                  recommendation.scene_number
+                ]
+
+              const showCollapsedView =
+                isActiveRecommendation &&
+                Boolean(confirmedCandidate) &&
+                !isReconsidering
+
+              return (
               <Card key={recommendation.scene_number}>
                 <CardHeader>
                   <CardTitle>
@@ -488,8 +553,35 @@ export function LocationsWorkspace() {
                 </CardHeader>
 
                 <CardContent className="space-y-4">
-                  {recommendation.candidates.length ===
-                  0 ? (
+                  {showCollapsedView && confirmedCandidate ? (
+                    <div className="flex flex-col gap-3">
+                      <CandidateCard
+                        candidate={confirmedCandidate}
+                        isSelected
+                        isMapHighlighted={
+                          confirmedCandidate.location_id ===
+                          selectedLocationId
+                        }
+                        onSelect={() => {}}
+                        onShowOnMap={() =>
+                          setSelectedLocationId(
+                            confirmedCandidate.location_id,
+                          )
+                        }
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setIsReconsidering(true)
+                        }
+                        className="self-start text-sm text-primary underline"
+                      >
+                        Change selection
+                      </button>
+                    </div>
+                  ) : recommendation.candidates.length ===
+                    0 ? (
                     <p>
                       No suitable locations were found.
                     </p>
@@ -507,103 +599,50 @@ export function LocationsWorkspace() {
                           candidate.location_id
 
                         return (
-                        <div
-                          key={candidate.location_id}
-                          className={`rounded-lg border p-4 transition-colors ${
-                            isSelected
-                              ? 'border-primary bg-primary/5'
-                              : isMapHighlighted
-                                ? 'border-amber/70 bg-amber/5'
-                                : 'border-border'
-                          }`}
-                        >
-                          <div className="flex justify-between gap-4">
-                            <h3 className="flex items-center gap-2 font-semibold">
-                              {candidate.place_name}
-                              {isSelected && (
-                                <Badge className="gap-1 border-primary/30 bg-primary text-primary-foreground">
-                                  <Check className="size-3" />
-                                  Selected
-                                </Badge>
-                              )}
-                            </h3>
-
-                            <Badge>
-                              {candidate.match_score}%
-                              match
-                            </Badge>
-                          </div>
-
-                          <p className="mt-2 text-sm text-muted-foreground">
-                            {candidate.address ??
-                              'Address unavailable'}
-                          </p>
-
-                          <p className="mt-2 text-sm">
-                            {candidate.match_reason}
-                          </p>
-
-                          <div className="mt-3 flex flex-wrap items-center gap-3">
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={isSelected}
-                              onClick={() =>
+                          <CandidateCard
+                            key={candidate.location_id}
+                            candidate={candidate}
+                            isSelected={isSelected}
+                            isMapHighlighted={
+                              isMapHighlighted
+                            }
+                            onSelect={() => {
+                              if (
+                                isReconsidering &&
+                                isActiveRecommendation
+                              ) {
+                                // Reconsidering an existing pick: update it
+                                // and collapse back to the single-card view
+                                // without jumping to the next scene.
+                                confirmLocationForScene(
+                                  recommendation.scene_number,
+                                  candidate,
+                                )
+                                setSelectedLocationId(
+                                  candidate.location_id,
+                                )
+                                setIsReconsidering(false)
+                              } else {
                                 handleConfirmLocation(
                                   recommendation.scene_number,
                                   candidate,
                                 )
                               }
-                              className="bg-primary text-primary-foreground hover:bg-primary/90"
-                            >
-                              <Check className="size-3.5" />
-                              {isSelected
-                                ? 'Selected for this scene'
-                                : 'Select this location'}
-                            </Button>
-
-                            {typeof candidate.latitude ===
-                              'number' &&
-                              Number.isFinite(
-                                candidate.latitude,
-                              ) &&
-                              typeof candidate.longitude ===
-                                'number' &&
-                              Number.isFinite(
-                                candidate.longitude,
-                              ) && (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setSelectedLocationId(
-                                      candidate.location_id,
-                                    )
-                                  }
-                                >
-                                  <MapPin className="size-3.5" />
-                                  Show on map
-                                </Button>
-                              )}
-
-                            <a
-                              href={candidate.source_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-sm text-primary underline"
-                            >
-                              View source
-                            </a>
-                          </div>
-                        </div>
+                            }}
+                            onShowOnMap={() =>
+                              setSelectedLocationId(
+                                candidate.location_id,
+                              )
+                            }
+                          />
                         )
                       },
                     )
                   )}
                 </CardContent>
               </Card>
-            ),
+              )
+            },
           )}
         </div>
       ) : (
@@ -617,6 +656,103 @@ export function LocationsWorkspace() {
         </Card>
       )}
     </AnalysisGate>
+  )
+}
+
+function CandidateCard({
+  candidate,
+  isSelected,
+  isMapHighlighted,
+  onSelect,
+  onShowOnMap,
+}: {
+  candidate: LocationCandidate
+  isSelected: boolean
+  isMapHighlighted: boolean
+  onSelect: () => void
+  onShowOnMap: () => void
+}) {
+  return (
+    <div
+      className={`rounded-lg border p-4 transition-colors ${
+        isSelected
+          ? 'border-primary bg-primary/5'
+          : isMapHighlighted
+            ? 'border-amber/70 bg-amber/5'
+            : 'border-border'
+      }`}
+    >
+      <div className="flex justify-between gap-4">
+        <h3 className="flex items-center gap-2 font-semibold">
+          {candidate.place_name}
+          {isSelected && (
+            <Badge className="gap-1 border-primary/30 bg-primary text-primary-foreground">
+              <Check className="size-3" />
+              Selected
+            </Badge>
+          )}
+        </h3>
+
+        <Badge>
+          {candidate.match_score}%
+          match
+        </Badge>
+      </div>
+
+      <p className="mt-2 text-sm text-muted-foreground">
+        {candidate.address ??
+          'Address unavailable'}
+      </p>
+
+      <p className="mt-2 text-sm">
+        {candidate.match_reason}
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          size="sm"
+          disabled={isSelected}
+          onClick={onSelect}
+          className="bg-primary text-primary-foreground hover:bg-primary/90"
+        >
+          <Check className="size-3.5" />
+          {isSelected
+            ? 'Selected for this scene'
+            : 'Select this location'}
+        </Button>
+
+        {typeof candidate.latitude ===
+          'number' &&
+          Number.isFinite(
+            candidate.latitude,
+          ) &&
+          typeof candidate.longitude ===
+            'number' &&
+          Number.isFinite(
+            candidate.longitude,
+          ) && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onShowOnMap}
+            >
+              <MapPin className="size-3.5" />
+              Show on map
+            </Button>
+          )}
+
+        <a
+          href={candidate.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm text-primary underline"
+        >
+          View source
+        </a>
+      </div>
+    </div>
   )
 }
 

@@ -3,12 +3,12 @@
 import * as React from 'react'
 import {
   AGENT_SEQUENCE,
-  BUDGET_CATEGORIES,
   type AgentKey,
   type AgentStatus,
 } from '@/lib/production-data'
 import { analyzeScreenplay, type DirectorAnalysis } from '@/lib/director-api'
 import { generateSchedule, type SchedulerAgentOutput } from '@/lib/scheduler-api'
+import { generateBudget, type BudgetAgentOutput } from '@/lib/budget-api'
 import type { LocationCandidate } from '@/lib/location-api'
 
 type AgentState = Record<AgentKey, AgentStatus>
@@ -29,11 +29,12 @@ const COMPLETE_AGENTS: AgentState = {
   risk: 'complete',
 }
 
-type BudgetState = Record<string, number>
+const DEFAULT_BUDGET_CURRENCY = 'EUR'
 
-const INITIAL_BUDGET: BudgetState = Object.fromEntries(
-  BUDGET_CATEGORIES.map((c) => [c.key, c.amount]),
-)
+type PendingLocationBudgetOverride = {
+  amount: number
+  currency: string
+}
 
 type ProductionContextValue = {
   analyzed: boolean
@@ -42,9 +43,11 @@ type ProductionContextValue = {
   activeAgent: AgentKey | null
   scriptText: string
   fileName: string | null
-  budget: BudgetState
-  budgetTotal: number
+  budgetResult: BudgetAgentOutput | null
+  budgetError: string | null
+  budgetOverrides: Record<string, number>
   budgetDirty: boolean
+  pendingLocationBudgetOverride: PendingLocationBudgetOverride | null
   directorAnalysis: DirectorAnalysis | null
   analysisError: string | null
   scheduleResult: SchedulerAgentOutput | null
@@ -55,7 +58,13 @@ type ProductionContextValue = {
   setFileName: (value: string | null) => void
   startAnalysis: () => Promise<boolean>
   runScheduler: (targetShootDays: number, additionalConstraints: string) => Promise<boolean>
+  runBudget: (
+    targetBudget: number,
+    currency: string,
+    additionalConstraints: string,
+  ) => Promise<boolean>
   confirmLocationForScene: (sceneNumber: number, candidate: LocationCandidate) => void
+  clearPendingLocationBudgetOverride: () => void
   reset: () => void
   setBudgetValue: (key: string, value: number) => void
   rerunPlan: () => void
@@ -68,8 +77,14 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [agents, setAgents] = React.useState<AgentState>(IDLE_AGENTS)
   const [scriptText, setScriptText] = React.useState('')
   const [fileName, setFileName] = React.useState<string | null>(null)
-  const [budget, setBudget] = React.useState<BudgetState>(INITIAL_BUDGET)
+  const [budgetResult, setBudgetResult] = React.useState<BudgetAgentOutput | null>(null)
+  const [budgetError, setBudgetError] = React.useState<string | null>(null)
+  const [budgetOverrides, setBudgetOverrides] = React.useState<Record<string, number>>({})
   const [budgetDirty, setBudgetDirty] = React.useState(false)
+  const [budgetCurrency, setBudgetCurrency] = React.useState(DEFAULT_BUDGET_CURRENCY)
+  const [budgetAdditionalConstraints, setBudgetAdditionalConstraints] = React.useState('')
+  const [pendingLocationBudgetOverride, setPendingLocationBudgetOverride] =
+    React.useState<PendingLocationBudgetOverride | null>(null)
   const [directorAnalysis, setDirectorAnalysis] = React.useState<DirectorAnalysis | null>(null)
   const [analysisError, setAnalysisError] = React.useState<string | null>(null)
   const [scheduleResult, setScheduleResult] = React.useState<SchedulerAgentOutput | null>(null)
@@ -77,44 +92,6 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [selectedLocationsByScene, setSelectedLocationsByScene] = React.useState<
     Record<number, LocationCandidate>
   >({})
-  const timers = React.useRef<ReturnType<typeof setTimeout>[]>([])
-
-  const clearTimers = React.useCallback(() => {
-    timers.current.forEach(clearTimeout)
-    timers.current = []
-  }, [])
-
-  React.useEffect(() => clearTimers, [clearTimers])
-
-  const runPipeline = React.useCallback(
-    (from: number) => {
-      clearTimers()
-      const step = 900
-      // The Location and Scheduler agents are real now (see
-      // confirmLocationForScene/runScheduler below) and are driven by real
-      // user actions, not this timer simulation. Director is also real
-      // (see startAnalysis) and is never included here since `from` starts
-      // at 1.
-      const simulatedAgents = AGENT_SEQUENCE.filter(
-        ({ key }) => key !== 'location' && key !== 'scheduler',
-      )
-      simulatedAgents.forEach(({ key }, index) => {
-        if (index < from) return
-        const order = index - from
-        timers.current.push(
-          setTimeout(() => {
-            setAgents((prev) => ({ ...prev, [key]: 'running' }))
-          }, order * step),
-        )
-        timers.current.push(
-          setTimeout(() => {
-            setAgents((prev) => ({ ...prev, [key]: 'complete' }))
-          }, order * step + step - 120),
-        )
-      })
-    },
-    [clearTimers],
-  )
 
   const startAnalysis = React.useCallback(async () => {
     setAnalyzed(true)
@@ -168,6 +145,48 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     [directorAnalysis],
   )
 
+  const runBudget = React.useCallback(
+    async (targetBudget: number, currency: string, additionalConstraints: string) => {
+      if (!directorAnalysis || directorAnalysis.scenes.length === 0) {
+        setBudgetError('Run Director analysis before generating a budget.')
+        return false
+      }
+
+      setAgents((previous) => ({ ...previous, budget: 'running' }))
+      setBudgetError(null)
+
+      try {
+        const result = await generateBudget({
+          scenes: directorAnalysis.scenes,
+          selected_locations: Object.values(selectedLocationsByScene),
+          total_shoot_days: scheduleResult?.total_shoot_days ?? null,
+          constraints: {
+            target_budget: targetBudget,
+            currency,
+            additional_constraints: additionalConstraints,
+          },
+          user_id: 'web_user',
+        })
+
+        setBudgetResult(result)
+        setBudgetCurrency(currency)
+        setBudgetAdditionalConstraints(additionalConstraints)
+        // A fresh result makes any prior slider overrides (measured
+        // against the old result) meaningless — clear them so the
+        // sliders start back at the agent's new numbers.
+        setBudgetOverrides({})
+        setBudgetDirty(false)
+        setAgents((previous) => ({ ...previous, budget: 'complete' }))
+        return true
+      } catch (error) {
+        setAgents((previous) => ({ ...previous, budget: 'idle' }))
+        setBudgetError(error instanceof Error ? error.message : 'Budget Agent failed.')
+        return false
+      }
+    },
+    [directorAnalysis, selectedLocationsByScene, scheduleResult],
+  )
+
   const confirmLocationForScene = React.useCallback(
     (sceneNumber: number, candidate: LocationCandidate) => {
       setSelectedLocationsByScene((previous) => ({
@@ -191,42 +210,73 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     )
   }, [allScenesHaveSelectedLocation])
 
+  const clearPendingLocationBudgetOverride = React.useCallback(() => {
+    setPendingLocationBudgetOverride(null)
+  }, [])
+
   const reset = React.useCallback(() => {
-    clearTimers()
     setAnalyzed(false)
     setAgents(IDLE_AGENTS)
     setScriptText('')
     setFileName(null)
-    setBudget(INITIAL_BUDGET)
+    setBudgetResult(null)
+    setBudgetError(null)
+    setBudgetOverrides({})
     setBudgetDirty(false)
+    setBudgetCurrency(DEFAULT_BUDGET_CURRENCY)
+    setBudgetAdditionalConstraints('')
+    setPendingLocationBudgetOverride(null)
     setDirectorAnalysis(null)
     setAnalysisError(null)
     setScheduleResult(null)
     setScheduleError(null)
     setSelectedLocationsByScene({})
-  }, [clearTimers])
+  }, [])
 
   const setBudgetValue = React.useCallback((key: string, value: number) => {
-    setBudget((prev) => ({ ...prev, [key]: value }))
+    setBudgetOverrides((prev) => ({ ...prev, [key]: value }))
     setBudgetDirty(true)
   }, [])
 
   const rerunPlan = React.useCallback(() => {
-    setBudgetDirty(false)
-    setAgents((prev) => ({ ...prev, location: 'idle', scheduler: 'idle', budget: 'idle', risk: 'idle' }))
+    if (!budgetResult || !directorAnalysis || directorAnalysis.scenes.length === 0) {
+      return
+    }
+
+    const effectiveAmount = (key: string, fallback: number) =>
+      budgetOverrides[key] ?? fallback
+
+    const locationsItem = budgetResult.line_items.find((item) => item.key === 'locations')
+
+    const newLocationsTarget = locationsItem
+      ? effectiveAmount(locationsItem.key, locationsItem.estimated_amount)
+      : 0
+
+    const perSceneDayRateCap =
+      directorAnalysis.scenes.length > 0
+        ? newLocationsTarget / directorAnalysis.scenes.length
+        : 0
+
+    setPendingLocationBudgetOverride({
+      amount: perSceneDayRateCap,
+      currency: budgetResult.currency,
+    })
+
+    setAgents((prev) => ({ ...prev, location: 'idle', scheduler: 'idle' }))
     // The prior schedule and location picks were made against the old
     // budget assumptions — clear them rather than leaving stale results on
     // screen (and letting a stale location set silently re-complete).
     setScheduleResult(null)
     setScheduleError(null)
     setSelectedLocationsByScene({})
-    runPipeline(1)
-  }, [runPipeline])
 
-  const budgetTotal = React.useMemo(
-    () => Object.values(budget).reduce((sum, v) => sum + v, 0),
-    [budget],
-  )
+    const newTargetBudget = budgetResult.line_items.reduce(
+      (sum, item) => sum + effectiveAmount(item.key, item.estimated_amount),
+      0,
+    )
+
+    void runBudget(newTargetBudget, budgetResult.currency, budgetAdditionalConstraints)
+  }, [budgetResult, budgetOverrides, budgetAdditionalConstraints, directorAnalysis, runBudget])
 
   const activeAgent = React.useMemo(
     () => AGENT_SEQUENCE.find(({ key }) => agents[key] === 'running')?.key ?? null,
@@ -240,9 +290,11 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     activeAgent,
     scriptText,
     fileName,
-    budget,
-    budgetTotal,
+    budgetResult,
+    budgetError,
+    budgetOverrides,
     budgetDirty,
+    pendingLocationBudgetOverride,
     directorAnalysis,
     analysisError,
     scheduleResult,
@@ -253,7 +305,9 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setFileName,
     startAnalysis,
     runScheduler,
+    runBudget,
     confirmLocationForScene,
+    clearPendingLocationBudgetOverride,
     reset,
     setBudgetValue,
     rerunPlan,

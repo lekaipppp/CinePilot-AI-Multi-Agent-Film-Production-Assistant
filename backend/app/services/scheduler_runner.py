@@ -1,16 +1,114 @@
 import json
+import logging
 from typing import Any, Dict, List
 from uuid import uuid4
 
 from backend.app.agents.scheduler_agent import scheduler_agent
-from backend.app.schemas.scheduler import SchedulerAgentOutput
+from backend.app.schemas.scheduler import ScheduleBlock, SchedulerAgentOutput
 
 from google.genai.types import Content, Part
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
+logger = logging.getLogger(__name__)
+
 APP_NAME = "cinepilot"
 OUTPUT_KEY = "schedule_data"
+
+
+def _shooting_requirements_by_scene(
+    scenes: List[Dict[str, Any]],
+) -> Dict[int, List[str]]:
+    """
+    Map scene_number to shooting_requirements from the original Director
+    Agent scenes, so the night-scene check below doesn't depend on the
+    Scheduler Agent having echoed anything back correctly.
+    """
+
+    lookup: Dict[int, List[str]] = {}
+
+    for scene in scenes:
+        scene_number = scene.get("scene_number")
+
+        if scene_number is None:
+            continue
+
+        lookup[scene_number] = scene.get("shooting_requirements") or []
+
+    return lookup
+
+
+def _is_night_block(
+    block: ScheduleBlock,
+    shooting_requirements_by_scene: Dict[int, List[str]],
+) -> bool:
+    """
+    Mirrors the Scheduler Agent instruction's rule 9 definition of a
+    night scene, computed deterministically instead of trusted from the
+    model's own summary counts.
+    """
+
+    if block.time_of_day and "night" in block.time_of_day.lower():
+        return True
+
+    requirements = shooting_requirements_by_scene.get(
+        block.scene_number, []
+    )
+
+    return any(
+        "night shoot" in requirement.lower()
+        for requirement in requirements
+    )
+
+
+def _apply_deterministic_summary(
+    result: SchedulerAgentOutput,
+    scenes: List[Dict[str, Any]],
+) -> SchedulerAgentOutput:
+    """
+    Recompute total_shoot_days and night_block_count from the actual
+    schedule rather than trusting the Scheduler Agent's own arithmetic,
+    logging whenever the model's numbers didn't match.
+    """
+
+    recomputed_total_shoot_days = max(
+        (block.shoot_day for block in result.schedule),
+        default=0,
+    )
+
+    if recomputed_total_shoot_days != result.total_shoot_days:
+        logger.warning(
+            "Scheduler Agent total_shoot_days mismatch: model returned "
+            "%s, recomputed %s from the schedule.",
+            result.total_shoot_days,
+            recomputed_total_shoot_days,
+        )
+
+        result.total_shoot_days = recomputed_total_shoot_days
+
+    shooting_requirements_by_scene = _shooting_requirements_by_scene(
+        scenes
+    )
+
+    night_shoot_days = {
+        block.shoot_day
+        for block in result.schedule
+        if _is_night_block(block, shooting_requirements_by_scene)
+    }
+
+    recomputed_night_block_count = len(night_shoot_days)
+
+    if recomputed_night_block_count != result.night_block_count:
+        logger.warning(
+            "Scheduler Agent night_block_count mismatch: model returned "
+            "%s, recomputed %s from the schedule.",
+            result.night_block_count,
+            recomputed_night_block_count,
+        )
+
+        result.night_block_count = recomputed_night_block_count
+
+    return result
 
 
 async def scheduler_runner(
@@ -98,12 +196,15 @@ async def scheduler_runner(
             )
 
         if isinstance(schedule_data, SchedulerAgentOutput):
-            return schedule_data
+            result = schedule_data
+        elif isinstance(schedule_data, str):
+            result = SchedulerAgentOutput.model_validate_json(
+                schedule_data
+            )
+        else:
+            result = SchedulerAgentOutput.model_validate(schedule_data)
 
-        if isinstance(schedule_data, str):
-            return SchedulerAgentOutput.model_validate_json(schedule_data)
-
-        return SchedulerAgentOutput.model_validate(schedule_data)
+        return _apply_deterministic_summary(result, scenes)
 
     except Exception as error:
         raise RuntimeError(

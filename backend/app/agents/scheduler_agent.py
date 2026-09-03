@@ -57,7 +57,7 @@ GROUPING TO MINIMIZE COMPANY MOVES
 NIGHT SCHEDULING AND TURNAROUND
 
 9. Treat a scene as a night scene when any of the following is true:
-   - interior_exterior or time_of_day contains "night" (case-insensitive);
+   - time_of_day contains "night" (case-insensitive);
    - "night shoot" appears in shooting_requirements.
 
 10. Schedule night scenes on consecutive shoot days where possible,
@@ -134,13 +134,29 @@ OUTPUT
     constraints text. Do not invent locations, cast availability, call
     times beyond the defaults in rule 11, or weather conditions.
 
+SELF-CHECK BEFORE RETURNING
+
+24. Before finalizing your answer, verify all of the following, and
+    correct the output rather than leaving any mismatch in:
+    - total_shoot_days equals the highest shoot_day value actually used
+      across the schedule list.
+    - night_block_count equals the number of distinct shoot_day values
+      that actually contain a night scene, as defined in rule 9.
+    - Every ScheduleBlock with has_conflict = true has a corresponding
+      SchedulingConstraint in the constraints list whose
+      affected_scene_numbers includes that scene's scene_number, and
+      every SchedulingConstraint's affected_scene_numbers only lists
+      scenes whose ScheduleBlock has has_conflict = true. No conflict
+      without an explaining constraint, and no constraint naming a
+      scene that isn't actually flagged.
+
 Return only structured output matching SchedulerAgentOutput.
 """
 
 
 scheduler_agent = LlmAgent(
     name="scheduler_agent",
-    model="gemini-3.5-flash-lite",
+    model="gemini-3.5-flash",
     instruction=SCHEDULER_AGENT_INSTRUCTION,
     output_schema=SchedulerAgentOutput,
     output_key="schedule_data",
