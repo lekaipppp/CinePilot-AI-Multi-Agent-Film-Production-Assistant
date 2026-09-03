@@ -1,9 +1,12 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import * as React from 'react'
 import {
+  ArrowRight,
   Building2,
+  Check,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
@@ -39,6 +42,7 @@ import type { DirectorScene } from '@/lib/director-api'
 import {
   searchLocations,
   type LocationAgentOutput,
+  type LocationCandidate,
 } from '@/lib/location-api'
 
 const LocationMap = dynamic(
@@ -123,7 +127,12 @@ function getSceneLabel(scene: DirectorScene): string {
 }
 
 export function LocationsWorkspace() {
-  const { directorAnalysis } = useProduction()
+  const {
+    directorAnalysis,
+    selectedLocationsByScene,
+    confirmLocationForScene,
+    allScenesHaveSelectedLocation,
+  } = useProduction()
   const scenes = directorAnalysis?.scenes ?? []
 
   const [isSearching, setIsSearching] = React.useState(false)
@@ -241,6 +250,27 @@ export function LocationsWorkspace() {
     )
   }
 
+  const handleConfirmLocation = (
+    sceneNumber: number,
+    candidate: LocationCandidate,
+  ) => {
+    confirmLocationForScene(sceneNumber, candidate)
+    setSelectedLocationId(candidate.location_id)
+
+    // Only auto-advance when the confirmed candidate belongs to the scene
+    // currently on screen — a stale recommendation for a different scene
+    // (not yet re-searched after switching) should not move the user off
+    // the scene they're actually looking at.
+    if (
+      activeScene &&
+      sceneNumber === activeScene.scene_number &&
+      activeSceneIndex >= 0 &&
+      activeSceneIndex < scenes.length - 1
+    ) {
+      selectNextScene()
+    }
+  }
+
   const handleSearch = async () => {
     if (!activeScene || !activeRequirements) return
 
@@ -348,12 +378,47 @@ export function LocationsWorkspace() {
             onNext={selectNextScene}
           />
 
+          {allScenesHaveSelectedLocation && (
+            <Card className="border-primary/40 bg-primary/5">
+              <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                    <Check className="size-4" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">
+                      Every scene has a selected location
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Ready to hand these off to the Scheduler Agent.
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  nativeButton={false}
+                  render={<Link href="/schedule" />}
+                  className="shrink-0"
+                >
+                  Continue to Scheduler
+                  <ArrowRight data-icon="inline-end" />
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(340px,0.88fr)]">
             <div className="flex min-w-0 flex-col gap-5">
               <SceneSummary
                 scene={activeScene}
                 detectedRequirements={
                   detectedRequirements
+                }
+                selectedLocation={
+                  selectedLocationsByScene[
+                    activeScene.scene_number
+                  ] ?? null
                 }
               />
 
@@ -430,19 +495,37 @@ export function LocationsWorkspace() {
                     </p>
                   ) : (
                     recommendation.candidates.map(
-                      (candidate) => (
+                      (candidate) => {
+                        const isMapHighlighted =
+                          candidate.location_id ===
+                          selectedLocationId
+
+                        const isSelected =
+                          selectedLocationsByScene[
+                            recommendation.scene_number
+                          ]?.location_id ===
+                          candidate.location_id
+
+                        return (
                         <div
                           key={candidate.location_id}
                           className={`rounded-lg border p-4 transition-colors ${
-                            candidate.location_id ===
-                            selectedLocationId
-                              ? 'border-amber/70 bg-amber/5'
-                              : 'border-border'
+                            isSelected
+                              ? 'border-primary bg-primary/5'
+                              : isMapHighlighted
+                                ? 'border-amber/70 bg-amber/5'
+                                : 'border-border'
                           }`}
                         >
                           <div className="flex justify-between gap-4">
-                            <h3 className="font-semibold">
+                            <h3 className="flex items-center gap-2 font-semibold">
                               {candidate.place_name}
+                              {isSelected && (
+                                <Badge className="gap-1 border-primary/30 bg-primary text-primary-foreground">
+                                  <Check className="size-3" />
+                                  Selected
+                                </Badge>
+                              )}
                             </h3>
 
                             <Badge>
@@ -461,6 +544,24 @@ export function LocationsWorkspace() {
                           </p>
 
                           <div className="mt-3 flex flex-wrap items-center gap-3">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={isSelected}
+                              onClick={() =>
+                                handleConfirmLocation(
+                                  recommendation.scene_number,
+                                  candidate,
+                                )
+                              }
+                              className="bg-primary text-primary-foreground hover:bg-primary/90"
+                            >
+                              <Check className="size-3.5" />
+                              {isSelected
+                                ? 'Selected for this scene'
+                                : 'Select this location'}
+                            </Button>
+
                             {typeof candidate.latitude ===
                               'number' &&
                               Number.isFinite(
@@ -496,7 +597,8 @@ export function LocationsWorkspace() {
                             </a>
                           </div>
                         </div>
-                      ),
+                        )
+                      },
                     )
                   )}
                 </CardContent>
@@ -533,6 +635,11 @@ function SceneSelector({
   onPrevious: () => void
   onNext: () => void
 }) {
+  const { selectedLocationsByScene } = useProduction()
+  const selectedCount = scenes.filter(
+    (scene) => selectedLocationsByScene[scene.scene_number] !== undefined,
+  ).length
+
   return (
     <Card className="border-border/60 bg-card/70">
       <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -543,10 +650,13 @@ function SceneSelector({
 
           <div className="min-w-0">
             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Location search scene
+              Location search scene · {selectedCount}/{scenes.length} selected
             </p>
 
-            <p className="truncate text-sm font-semibold">
+            <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+              {selectedLocationsByScene[activeScene.scene_number] && (
+                <Check className="size-3.5 shrink-0 text-primary" />
+              )}
               {activeScene.scene_heading}
             </p>
           </div>
@@ -585,7 +695,12 @@ function SceneSelector({
                     scene.scene_number,
                   )}
                 >
-                  {getSceneLabel(scene)}
+                  <span className="flex items-center gap-1.5">
+                    {selectedLocationsByScene[scene.scene_number] && (
+                      <Check className="size-3.5 shrink-0 text-primary" />
+                    )}
+                    {getSceneLabel(scene)}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -613,9 +728,11 @@ function SceneSelector({
 function SceneSummary({
   scene,
   detectedRequirements,
+  selectedLocation,
 }: {
   scene: DirectorScene
   detectedRequirements: string[]
+  selectedLocation: LocationCandidate | null
 }) {
   return (
     <Card className="overflow-hidden border-border/60 bg-card/70">
@@ -631,13 +748,22 @@ function SceneSummary({
             </CardTitle>
           </div>
 
-          <Badge
-            variant="outline"
-            className="border-primary/30 bg-primary/10 text-primary"
-          >
-            <Sparkles className="mr-1 size-3" />
-            Director analyzed
-          </Badge>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {selectedLocation && (
+              <Badge className="border-primary/30 bg-primary text-primary-foreground">
+                <Check className="mr-1 size-3" />
+                Selected: {selectedLocation.place_name}
+              </Badge>
+            )}
+
+            <Badge
+              variant="outline"
+              className="border-primary/30 bg-primary/10 text-primary"
+            >
+              <Sparkles className="mr-1 size-3" />
+              Director analyzed
+            </Badge>
+          </div>
         </div>
       </CardHeader>
 

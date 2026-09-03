@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from backend.app.api.v1 import locations, screenplay
+from backend.app.api.v1 import locations, scheduler, screenplay
 # from backend.app.api.v1 import auth  # 暂时禁用：auth.py 依赖的 app.database / app.models 还没写
 
 
@@ -22,4 +22,10 @@ api_router.include_router(
     locations.router,
     prefix="/locations",
     tags=["Locations"],
+)
+
+api_router.include_router(
+    scheduler.router,
+    prefix="/scheduler",
+    tags=["Scheduler"],
 )

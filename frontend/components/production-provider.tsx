@@ -8,6 +8,8 @@ import {
   type AgentStatus,
 } from '@/lib/production-data'
 import { analyzeScreenplay, type DirectorAnalysis } from '@/lib/director-api'
+import { generateSchedule, type SchedulerAgentOutput } from '@/lib/scheduler-api'
+import type { LocationCandidate } from '@/lib/location-api'
 
 type AgentState = Record<AgentKey, AgentStatus>
 
@@ -45,9 +47,15 @@ type ProductionContextValue = {
   budgetDirty: boolean
   directorAnalysis: DirectorAnalysis | null
   analysisError: string | null
+  scheduleResult: SchedulerAgentOutput | null
+  scheduleError: string | null
+  selectedLocationsByScene: Record<number, LocationCandidate>
+  allScenesHaveSelectedLocation: boolean
   setScriptText: (value: string) => void
   setFileName: (value: string | null) => void
   startAnalysis: () => Promise<boolean>
+  runScheduler: (targetShootDays: number, additionalConstraints: string) => Promise<boolean>
+  confirmLocationForScene: (sceneNumber: number, candidate: LocationCandidate) => void
   reset: () => void
   setBudgetValue: (key: string, value: number) => void
   rerunPlan: () => void
@@ -64,6 +72,11 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [budgetDirty, setBudgetDirty] = React.useState(false)
   const [directorAnalysis, setDirectorAnalysis] = React.useState<DirectorAnalysis | null>(null)
   const [analysisError, setAnalysisError] = React.useState<string | null>(null)
+  const [scheduleResult, setScheduleResult] = React.useState<SchedulerAgentOutput | null>(null)
+  const [scheduleError, setScheduleError] = React.useState<string | null>(null)
+  const [selectedLocationsByScene, setSelectedLocationsByScene] = React.useState<
+    Record<number, LocationCandidate>
+  >({})
   const timers = React.useRef<ReturnType<typeof setTimeout>[]>([])
 
   const clearTimers = React.useCallback(() => {
@@ -77,7 +90,15 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     (from: number) => {
       clearTimers()
       const step = 900
-      AGENT_SEQUENCE.forEach(({ key }, index) => {
+      // The Location and Scheduler agents are real now (see
+      // confirmLocationForScene/runScheduler below) and are driven by real
+      // user actions, not this timer simulation. Director is also real
+      // (see startAnalysis) and is never included here since `from` starts
+      // at 1.
+      const simulatedAgents = AGENT_SEQUENCE.filter(
+        ({ key }) => key !== 'location' && key !== 'scheduler',
+      )
+      simulatedAgents.forEach(({ key }, index) => {
         if (index < from) return
         const order = index - from
         timers.current.push(
@@ -115,6 +136,61 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     }
   }, [scriptText])
 
+  const runScheduler = React.useCallback(
+    async (targetShootDays: number, additionalConstraints: string) => {
+      if (!directorAnalysis || directorAnalysis.scenes.length === 0) {
+        setScheduleError('Run Director analysis before generating a schedule.')
+        return false
+      }
+
+      setAgents((previous) => ({ ...previous, scheduler: 'running' }))
+      setScheduleError(null)
+
+      try {
+        const result = await generateSchedule({
+          scenes: directorAnalysis.scenes,
+          constraints: {
+            target_shoot_days: targetShootDays,
+            additional_constraints: additionalConstraints,
+          },
+          user_id: 'web_user',
+        })
+
+        setScheduleResult(result)
+        setAgents((previous) => ({ ...previous, scheduler: 'complete' }))
+        return true
+      } catch (error) {
+        setAgents((previous) => ({ ...previous, scheduler: 'idle' }))
+        setScheduleError(error instanceof Error ? error.message : 'Scheduler Agent failed.')
+        return false
+      }
+    },
+    [directorAnalysis],
+  )
+
+  const confirmLocationForScene = React.useCallback(
+    (sceneNumber: number, candidate: LocationCandidate) => {
+      setSelectedLocationsByScene((previous) => ({
+        ...previous,
+        [sceneNumber]: candidate,
+      }))
+    },
+    [],
+  )
+
+  const allScenesHaveSelectedLocation = React.useMemo(() => {
+    const scenes = directorAnalysis?.scenes ?? []
+    if (scenes.length === 0) return false
+    return scenes.every((scene) => selectedLocationsByScene[scene.scene_number] !== undefined)
+  }, [directorAnalysis, selectedLocationsByScene])
+
+  React.useEffect(() => {
+    if (!allScenesHaveSelectedLocation) return
+    setAgents((previous) =>
+      previous.location === 'complete' ? previous : { ...previous, location: 'complete' },
+    )
+  }, [allScenesHaveSelectedLocation])
+
   const reset = React.useCallback(() => {
     clearTimers()
     setAnalyzed(false)
@@ -125,6 +201,9 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setBudgetDirty(false)
     setDirectorAnalysis(null)
     setAnalysisError(null)
+    setScheduleResult(null)
+    setScheduleError(null)
+    setSelectedLocationsByScene({})
   }, [clearTimers])
 
   const setBudgetValue = React.useCallback((key: string, value: number) => {
@@ -135,6 +214,12 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const rerunPlan = React.useCallback(() => {
     setBudgetDirty(false)
     setAgents((prev) => ({ ...prev, location: 'idle', scheduler: 'idle', budget: 'idle', risk: 'idle' }))
+    // The prior schedule and location picks were made against the old
+    // budget assumptions — clear them rather than leaving stale results on
+    // screen (and letting a stale location set silently re-complete).
+    setScheduleResult(null)
+    setScheduleError(null)
+    setSelectedLocationsByScene({})
     runPipeline(1)
   }, [runPipeline])
 
@@ -160,9 +245,15 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     budgetDirty,
     directorAnalysis,
     analysisError,
+    scheduleResult,
+    scheduleError,
+    selectedLocationsByScene,
+    allScenesHaveSelectedLocation,
     setScriptText,
     setFileName,
     startAnalysis,
+    runScheduler,
+    confirmLocationForScene,
     reset,
     setBudgetValue,
     rerunPlan,
