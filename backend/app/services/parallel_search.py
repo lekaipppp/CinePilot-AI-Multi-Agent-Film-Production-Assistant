@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any
 
 from dotenv import load_dotenv
@@ -28,6 +29,11 @@ LOW_QUALITY_DOMAINS = [
 # The model that consumes the Location Agent's search results. Passed to
 # Parallel as client_model so excerpts are formatted for this model.
 LOCATION_AGENT_MODEL = "gemini-3.5-flash-lite"
+
+# Bounded retry settings for execute_parallel_search(), to absorb
+# transient network/API failures.
+MAX_SEARCH_ATTEMPTS = 2
+RETRY_BACKOFF_SECONDS = 1.5
 
 
 def compact_search_region(region: str) -> str:
@@ -376,7 +382,34 @@ def build_search_queries(
             f"{primary_venue} filming location {region}"
         )
 
+    # ---------------------------------------------------------
+    # 5. Practical details discovery (address, price, service style)
+    # ---------------------------------------------------------
+    queries.append(
+        f"{primary_venue} menu reviews {region}"
+    )
+
     return list(dict.fromkeys(queries))[:5]
+
+
+def build_fallback_search_queries(
+    scene: Scene,
+    requirements: LocationRequirements,
+) -> list[str]:
+    """
+    Build a single, maximally broad fallback query.
+
+    Used when the primary, more specific queries from
+    build_search_queries() return no usable results.
+    """
+
+    region = compact_search_region(
+        requirements.preferred_region
+    )
+
+    primary_venue, _ = get_search_venue_terms(scene)
+
+    return [f"{primary_venue} {region}"]
 
 
 def execute_parallel_search(
@@ -388,6 +421,10 @@ def execute_parallel_search(
 
     This function is run in a worker thread so the synchronous
     Parallel SDK does not block FastAPI's event loop.
+
+    Retries up to MAX_SEARCH_ATTEMPTS times, with a backoff of
+    RETRY_BACKOFF_SECONDS multiplied by the attempt number, to
+    absorb transient network/API failures.
     """
 
     api_key = os.getenv("PARALLEL_API_KEY")
@@ -399,22 +436,41 @@ def execute_parallel_search(
 
     client = Parallel(api_key=api_key)
 
-    return client.search(
-        objective=objective,
-        search_queries=search_queries,
-        mode="advanced",
-        client_model=LOCATION_AGENT_MODEL,
-        max_chars_total=40_000,
-        advanced_settings={
-            "max_results": 8,
-            "excerpt_settings": {
-                "max_chars_per_result": 2000,
-            },
-            "source_policy": {
-                "exclude_domains": LOW_QUALITY_DOMAINS,
-            },
-        },
-    )
+    last_error: Exception | None = None
+
+    for attempt in range(1, MAX_SEARCH_ATTEMPTS + 1):
+        try:
+            return client.search(
+                objective=objective,
+                search_queries=search_queries,
+                mode="advanced",
+                client_model=LOCATION_AGENT_MODEL,
+                max_chars_total=40_000,
+                advanced_settings={
+                    "max_results": 8,
+                    "excerpt_settings": {
+                        "max_chars_per_result": 2000,
+                    },
+                    "source_policy": {
+                        "exclude_domains": LOW_QUALITY_DOMAINS,
+                    },
+                },
+            )
+
+        except Exception as error:
+            last_error = error
+
+            if attempt < MAX_SEARCH_ATTEMPTS:
+                logger.warning(
+                    "Parallel search attempt %s/%s failed: %s",
+                    attempt,
+                    MAX_SEARCH_ATTEMPTS,
+                    error,
+                )
+
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+    raise last_error
 
 
 def normalize_search_results(
@@ -528,6 +584,21 @@ def log_search_results(
         len(results),
     )
 
+    all_excerpts = [
+        excerpt
+        for result in results
+        for excerpt in result["excerpts"]
+    ]
+
+    average_excerpt_length = (
+        round(
+            sum(len(excerpt) for excerpt in all_excerpts)
+            / len(all_excerpts)
+        )
+        if all_excerpts
+        else 0
+    )
+
     print("\n========== PARALLEL SEARCH ==========")
     print("\nSEARCH QUERIES")
 
@@ -538,7 +609,8 @@ def log_search_results(
         print(f"{index}. {query}")
 
     print(
-        f"\nUSABLE RESULTS: {len(results)}"
+        f"\nUSABLE RESULTS: {len(results)} "
+        f"(avg excerpt length: {average_excerpt_length} chars)"
     )
 
     for index, result in enumerate(
@@ -554,7 +626,8 @@ def log_search_results(
             start=1,
         ):
             print(
-                f"Excerpt {excerpt_index}: {excerpt}"
+                f"Excerpt {excerpt_index} "
+                f"({len(excerpt)} chars): {excerpt}"
             )
 
     print("\n=====================================")
@@ -606,6 +679,39 @@ async def search_location_candidates(
     results = normalize_search_results(
         search_response
     )
+
+    if not results:
+        logger.warning(
+            "Primary location search returned no usable results; "
+            "retrying with a broader fallback query."
+        )
+
+        fallback_queries = build_fallback_search_queries(
+            scene=scene,
+            requirements=requirements,
+        )
+
+        try:
+            fallback_response = await asyncio.to_thread(
+                execute_parallel_search,
+                objective,
+                fallback_queries,
+            )
+
+        except Exception as error:
+            logger.exception(
+                "Fallback parallel location search failed."
+            )
+
+            raise RuntimeError(
+                f"Parallel location search failed: {error}"
+            ) from error
+
+        results = normalize_search_results(
+            fallback_response
+        )
+
+        search_queries = fallback_queries
 
     log_search_results(
         objective=objective,
