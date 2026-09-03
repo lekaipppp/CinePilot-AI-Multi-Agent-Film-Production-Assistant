@@ -35,6 +35,52 @@ LOCATION_AGENT_MODEL = "gemini-3.5-flash-lite"
 MAX_SEARCH_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 1.5
 
+# Best-effort country-name to ISO alpha-2 mapping, used to geo-bias
+# search results toward the right country when we can confidently parse
+# one out of the user's preferred_region. Deliberately conservative:
+# if a region doesn't end in a recognized country name, we omit the
+# location bias entirely rather than guess, since an incorrect or
+# overly restrictive location setting can reduce result quality rather
+# than improve it.
+_COUNTRY_TO_ISO2 = {
+    "usa": "us",
+    "us": "us",
+    "united states": "us",
+    "united states of america": "us",
+    "uk": "gb",
+    "united kingdom": "gb",
+    "canada": "ca",
+    "australia": "au",
+    "germany": "de",
+    "france": "fr",
+    "spain": "es",
+    "italy": "it",
+    "ireland": "ie",
+    "new zealand": "nz",
+}
+
+
+def guess_country_code(region: str) -> str | None:
+    """
+    Best-effort extraction of an ISO alpha-2 country code from the
+    user's preferred_region, used only to bias search geography.
+
+    Returns None (no bias applied) when the country can't be
+    confidently identified from the final comma-separated segment,
+    rather than guessing.
+    """
+
+    parts = [
+        part.strip().lower()
+        for part in region.split(",")
+        if part.strip()
+    ]
+
+    if not parts:
+        return None
+
+    return _COUNTRY_TO_ISO2.get(parts[-1])
+
 
 def compact_search_region(region: str) -> str:
     """
@@ -313,7 +359,11 @@ def build_search_objective(
         f"features: {visual_features}. Additional requirements: "
         f"{additional_requirements}. Prefer official venue pages and "
         f"individual rental listings that name a specific place; avoid "
-        f"generic articles or unnamed properties."
+        f"generic articles or unnamed properties. Also avoid "
+        f"multi-category roundup articles that group different kinds "
+        f"of venues together (for example, a \"best bars and "
+        f"restaurants\" list), unless the excerpt is specifically and "
+        f"substantially about a {primary_venue}."
     ).strip()
 
 
@@ -415,6 +465,7 @@ def build_fallback_search_queries(
 def execute_parallel_search(
     objective: str,
     search_queries: list[str],
+    country_code: str | None = None,
 ) -> Any:
     """
     Execute the blocking Parallel SDK request.
@@ -425,6 +476,10 @@ def execute_parallel_search(
     Retries up to MAX_SEARCH_ATTEMPTS times, with a backoff of
     RETRY_BACKOFF_SECONDS multiplied by the attempt number, to
     absorb transient network/API failures.
+
+    country_code, when provided, biases results toward that country
+    (see guess_country_code). Omitted entirely when None, rather than
+    passed as an empty/guessed value.
     """
 
     api_key = os.getenv("PARALLEL_API_KEY")
@@ -436,6 +491,19 @@ def execute_parallel_search(
 
     client = Parallel(api_key=api_key)
 
+    advanced_settings: dict[str, Any] = {
+        "max_results": 8,
+        "excerpt_settings": {
+            "max_chars_per_result": 2000,
+        },
+        "source_policy": {
+            "exclude_domains": LOW_QUALITY_DOMAINS,
+        },
+    }
+
+    if country_code:
+        advanced_settings["location"] = country_code
+
     last_error: Exception | None = None
 
     for attempt in range(1, MAX_SEARCH_ATTEMPTS + 1):
@@ -446,15 +514,7 @@ def execute_parallel_search(
                 mode="advanced",
                 client_model=LOCATION_AGENT_MODEL,
                 max_chars_total=40_000,
-                advanced_settings={
-                    "max_results": 8,
-                    "excerpt_settings": {
-                        "max_chars_per_result": 2000,
-                    },
-                    "source_policy": {
-                        "exclude_domains": LOW_QUALITY_DOMAINS,
-                    },
-                },
+                advanced_settings=advanced_settings,
             )
 
         except Exception as error:
@@ -655,6 +715,10 @@ async def search_location_candidates(
         requirements=requirements,
     )
 
+    country_code = guess_country_code(
+        requirements.preferred_region
+    )
+
     if not search_queries:
         raise RuntimeError(
             "No location search queries could be generated."
@@ -665,6 +729,7 @@ async def search_location_candidates(
             execute_parallel_search,
             objective,
             search_queries,
+            country_code,
         )
 
     except Exception as error:
@@ -696,6 +761,7 @@ async def search_location_candidates(
                 execute_parallel_search,
                 objective,
                 fallback_queries,
+                country_code,
             )
 
         except Exception as error:
