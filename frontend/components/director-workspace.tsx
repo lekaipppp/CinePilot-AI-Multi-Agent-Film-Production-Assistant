@@ -1,7 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import { LayoutGrid, Rows3, Sun, Moon, Sunrise, Sunset } from 'lucide-react'
+import Link from 'next/link'
+import { ArrowRight, LayoutGrid, Rows3, Sun, Moon, Sunrise, Sunset } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -18,6 +19,7 @@ import {
 } from '@/components/ui/accordion'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Separator } from '@/components/ui/separator'
 import { AnalysisGate } from '@/components/analysis-gate'
@@ -88,6 +90,15 @@ export function DirectorWorkspace() {
         </div>
 
         {view === 'table' ? <SceneTable scenes={scenes} /> : <SceneCards scenes={scenes} />}
+
+        {scenes.length > 0 && (
+          <div className="flex justify-end pt-2">
+            <Button size="lg" className="gap-2" render={<Link href="/locations" />}>
+              Continue to Locations
+              <ArrowRight className="size-4" />
+            </Button>
+          </div>
+        )}
       </div>
     </AnalysisGate>
   )
