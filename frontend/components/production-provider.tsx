@@ -10,6 +10,10 @@ import { analyzeScreenplay, type DirectorAnalysis } from '@/lib/director-api'
 import { generateSchedule, type SchedulerAgentOutput } from '@/lib/scheduler-api'
 import { generateBudget, type BudgetAgentOutput } from '@/lib/budget-api'
 import type { LocationCandidate } from '@/lib/location-api'
+import {
+  createDefaultRequirements,
+  type SceneLocationRequirements,
+} from '@/lib/location-requirements'
 
 type AgentState = Record<AgentKey, AgentStatus>
 
@@ -54,6 +58,8 @@ type ProductionContextValue = {
   scheduleError: string | null
   selectedLocationsByScene: Record<number, LocationCandidate>
   allScenesHaveSelectedLocation: boolean
+  autoRelocateRequestId: number
+  requirementsByScene: Record<number, SceneLocationRequirements>
   setScriptText: (value: string) => void
   setFileName: (value: string | null) => void
   startAnalysis: () => Promise<boolean>
@@ -65,9 +71,15 @@ type ProductionContextValue = {
   ) => Promise<boolean>
   confirmLocationForScene: (sceneNumber: number, candidate: LocationCandidate) => void
   clearPendingLocationBudgetOverride: () => void
+  bumpAutoRelocateRequest: () => void
+  updateSceneRequirement: <Key extends keyof SceneLocationRequirements>(
+    sceneNumber: number,
+    key: Key,
+    value: SceneLocationRequirements[Key],
+  ) => void
   reset: () => void
   setBudgetValue: (key: string, value: number) => void
-  rerunPlan: () => void
+  rerunPlan: () => Promise<void>
 }
 
 const ProductionContext = React.createContext<ProductionContextValue | null>(null)
@@ -85,13 +97,43 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [budgetAdditionalConstraints, setBudgetAdditionalConstraints] = React.useState('')
   const [pendingLocationBudgetOverride, setPendingLocationBudgetOverride] =
     React.useState<PendingLocationBudgetOverride | null>(null)
+  const [autoRelocateRequestId, setAutoRelocateRequestId] = React.useState(0)
   const [directorAnalysis, setDirectorAnalysis] = React.useState<DirectorAnalysis | null>(null)
   const [analysisError, setAnalysisError] = React.useState<string | null>(null)
   const [scheduleResult, setScheduleResult] = React.useState<SchedulerAgentOutput | null>(null)
   const [scheduleError, setScheduleError] = React.useState<string | null>(null)
+  const [lastScheduleTargetDays, setLastScheduleTargetDays] = React.useState<number | null>(null)
+  const [lastScheduleConstraints, setLastScheduleConstraints] = React.useState<string | null>(null)
   const [selectedLocationsByScene, setSelectedLocationsByScene] = React.useState<
     Record<number, LocationCandidate>
   >({})
+  const [requirementsByScene, setRequirementsByScene] = React.useState<
+    Record<number, SceneLocationRequirements>
+  >({})
+
+  /*
+   * Lives here (not in locations-workspace.tsx) so a scene's search
+   * preferences — region, day rate, radius, etc. — survive navigating
+   * away from /locations and back, and so the automatic re-search loop
+   * (triggered from the Budget page) always has real data to work with,
+   * not fresh empty defaults from a just-remounted component.
+   */
+  React.useEffect(() => {
+    const scenes = directorAnalysis?.scenes ?? []
+    if (scenes.length === 0) return
+
+    setRequirementsByScene((current) => {
+      const next = { ...current }
+
+      for (const scene of scenes) {
+        if (!next[scene.scene_number]) {
+          next[scene.scene_number] = createDefaultRequirements(scene)
+        }
+      }
+
+      return next
+    })
+  }, [directorAnalysis])
 
   const startAnalysis = React.useCallback(async () => {
     setAnalyzed(true)
@@ -134,6 +176,8 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
         })
 
         setScheduleResult(result)
+        setLastScheduleTargetDays(targetShootDays)
+        setLastScheduleConstraints(additionalConstraints)
         setAgents((previous) => ({ ...previous, scheduler: 'complete' }))
         return true
       } catch (error) {
@@ -214,6 +258,33 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setPendingLocationBudgetOverride(null)
   }, [])
 
+  const bumpAutoRelocateRequest = React.useCallback(() => {
+    setAutoRelocateRequestId((previous) => previous + 1)
+  }, [])
+
+  const updateSceneRequirement = React.useCallback(
+    <Key extends keyof SceneLocationRequirements>(
+      sceneNumber: number,
+      key: Key,
+      value: SceneLocationRequirements[Key],
+    ) => {
+      setRequirementsByScene((current) => {
+        const scene = directorAnalysis?.scenes.find(
+          (candidate) => candidate.scene_number === sceneNumber,
+        )
+        const existing = current[sceneNumber] ?? (scene ? createDefaultRequirements(scene) : null)
+
+        if (!existing) return current
+
+        return {
+          ...current,
+          [sceneNumber]: { ...existing, [key]: value },
+        }
+      })
+    },
+    [directorAnalysis],
+  )
+
   const reset = React.useCallback(() => {
     setAnalyzed(false)
     setAgents(IDLE_AGENTS)
@@ -226,11 +297,15 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setBudgetCurrency(DEFAULT_BUDGET_CURRENCY)
     setBudgetAdditionalConstraints('')
     setPendingLocationBudgetOverride(null)
+    setAutoRelocateRequestId(0)
     setDirectorAnalysis(null)
     setAnalysisError(null)
     setScheduleResult(null)
     setScheduleError(null)
+    setLastScheduleTargetDays(null)
+    setLastScheduleConstraints(null)
     setSelectedLocationsByScene({})
+    setRequirementsByScene({})
   }, [])
 
   const setBudgetValue = React.useCallback((key: string, value: number) => {
@@ -238,7 +313,7 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setBudgetDirty(true)
   }, [])
 
-  const rerunPlan = React.useCallback(() => {
+  const rerunPlan = React.useCallback(async () => {
     if (!budgetResult || !directorAnalysis || directorAnalysis.scenes.length === 0) {
       return
     }
@@ -275,8 +350,34 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
       0,
     )
 
-    void runBudget(newTargetBudget, budgetResult.currency, budgetAdditionalConstraints)
-  }, [budgetResult, budgetOverrides, budgetAdditionalConstraints, directorAnalysis, runBudget])
+    const budgetSucceeded = await runBudget(
+      newTargetBudget,
+      budgetResult.currency,
+      budgetAdditionalConstraints,
+    )
+
+    // This is a hackathon demo — fully automatic is fine, so a
+    // successful budget rerun also replays the Scheduler Agent with the
+    // same inputs used last time (if a schedule existed before), and
+    // then signals locations-workspace.tsx to re-search and
+    // auto-select a location for every scene, instead of leaving
+    // Location/Scheduler idle for the user to re-trigger by hand.
+    if (budgetSucceeded && lastScheduleTargetDays !== null) {
+      await runScheduler(lastScheduleTargetDays, lastScheduleConstraints ?? '')
+    }
+
+    bumpAutoRelocateRequest()
+  }, [
+    budgetResult,
+    budgetOverrides,
+    budgetAdditionalConstraints,
+    directorAnalysis,
+    lastScheduleTargetDays,
+    lastScheduleConstraints,
+    runBudget,
+    runScheduler,
+    bumpAutoRelocateRequest,
+  ])
 
   const activeAgent = React.useMemo(
     () => AGENT_SEQUENCE.find(({ key }) => agents[key] === 'running')?.key ?? null,
@@ -301,6 +402,8 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     scheduleError,
     selectedLocationsByScene,
     allScenesHaveSelectedLocation,
+    autoRelocateRequestId,
+    requirementsByScene,
     setScriptText,
     setFileName,
     startAnalysis,
@@ -308,6 +411,8 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     runBudget,
     confirmLocationForScene,
     clearPendingLocationBudgetOverride,
+    bumpAutoRelocateRequest,
+    updateSceneRequirement,
     reset,
     setBudgetValue,
     rerunPlan,

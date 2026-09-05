@@ -316,7 +316,7 @@ export function BudgetWorkspace() {
                       </div>
                     </CardContent>
                     <CardFooter className="flex-col items-stretch gap-2">
-                      <Button onClick={rerunPlan} disabled={isRunning || !budgetDirty}>
+                      <Button onClick={() => void rerunPlan()} disabled={isRunning || !budgetDirty}>
                         {isRunning ? (
                           <Loader2 data-icon="inline-start" className="animate-spin" />
                         ) : (
@@ -393,6 +393,7 @@ export function BudgetWorkspace() {
                       const value = effectiveAmount(category.key, baseline)
                       const categoryDelta = value - baseline
                       const maxSlider = Math.max(baseline * 2, value, 1000)
+                      const sliderStep = Math.max(10, Math.round(maxSlider / 50 / 10) * 10)
 
                       return (
                         <div key={category.key} className="flex flex-col gap-3">
@@ -424,10 +425,10 @@ export function BudgetWorkspace() {
                           </div>
                           <Slider
                             id={`budget-${category.key}`}
-                            value={value}
+                            value={[value]}
                             min={0}
                             max={maxSlider}
-                            step={1000}
+                            step={sliderStep}
                             aria-label={`${category.label} budget`}
                             onValueChange={(next) =>
                               setBudgetValue(category.key, Array.isArray(next) ? next[0] : next)

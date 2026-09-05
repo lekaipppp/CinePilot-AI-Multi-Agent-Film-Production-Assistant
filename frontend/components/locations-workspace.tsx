@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Crosshair,
+  Loader2,
   MapPin,
   Search,
   SlidersHorizontal,
@@ -44,6 +45,12 @@ import {
   type LocationAgentOutput,
   type LocationCandidate,
 } from '@/lib/location-api'
+import {
+  createDefaultRequirements,
+  type EnvironmentPreference,
+  type PermitPreference,
+  type SceneLocationRequirements,
+} from '@/lib/location-requirements'
 
 const LocationMap = dynamic(
   () => import('@/components/location-map'),
@@ -52,51 +59,7 @@ const LocationMap = dynamic(
   },
 )
 
-type EnvironmentPreference =
-  | 'Interior'
-  | 'Exterior'
-  | 'Interior/Exterior'
-  | 'Either'
-
-type PermitPreference =
-  | 'any'
-  | 'permit-free-preferred'
-  | 'permit-free-required'
-
-type SceneLocationRequirements = {
-  preferredRegion: string
-  maximumDayRate: string
-  currency: string
-  searchRadiusKm: string
-  environment: EnvironmentPreference
-  permitPreference: PermitPreference
-  practicalOrStudio: 'either' | 'practical' | 'studio'
-  filmingDate: string
-  additionalRequirements: string
-}
-
 const CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF', 'CAD']
-
-function createDefaultRequirements(
-  scene: DirectorScene,
-): SceneLocationRequirements {
-  const environment =
-    scene.interior_exterior === 'Unspecified'
-      ? 'Either'
-      : scene.interior_exterior
-
-  return {
-    preferredRegion: '',
-    maximumDayRate: '1500',
-    currency: 'EUR',
-    searchRadiusKm: '50',
-    environment,
-    permitPreference: 'any',
-    practicalOrStudio: 'either',
-    filmingDate: '',
-    additionalRequirements: '',
-  }
-}
 
 function getDetectedRequirements(scene: DirectorScene): string[] {
   const requirements = [
@@ -126,6 +89,33 @@ function getSceneLabel(scene: DirectorScene): string {
   return `Scene ${scene.scene_number}`
 }
 
+/*
+ * Shared by the manual "Find locations for Scene N" button and the
+ * automatic re-search loop below — the only place the
+ * LocationSearchRequest payload is built, so the two flows can never
+ * drift apart.
+ */
+function fetchLocationsForScene(
+  scene: DirectorScene,
+  requirements: SceneLocationRequirements,
+): Promise<LocationAgentOutput> {
+  return searchLocations({
+    scene,
+    user_requirements: {
+      preferred_region: requirements.preferredRegion.trim(),
+      maximum_day_rate: Number(requirements.maximumDayRate),
+      currency: requirements.currency,
+      maximum_distance_km: Number(requirements.searchRadiusKm),
+      environment: requirements.environment,
+      permit_preference: requirements.permitPreference,
+      location_type: requirements.practicalOrStudio,
+      filming_date: requirements.filmingDate || null,
+      additional_requirements: requirements.additionalRequirements.trim(),
+    },
+    user_id: 'web_user',
+  })
+}
+
 export function LocationsWorkspace() {
   const {
     directorAnalysis,
@@ -134,8 +124,18 @@ export function LocationsWorkspace() {
     allScenesHaveSelectedLocation,
     pendingLocationBudgetOverride,
     clearPendingLocationBudgetOverride,
+    autoRelocateRequestId,
+    requirementsByScene,
+    updateSceneRequirement,
   } = useProduction()
   const scenes = directorAnalysis?.scenes ?? []
+
+  const [isAutoRelocating, setIsAutoRelocating] = React.useState(false)
+
+  const [autoRelocateProgress, setAutoRelocateProgress] = React.useState<{
+    current: number
+    total: number
+  } | null>(null)
 
   const [isSearching, setIsSearching] = React.useState(false)
 
@@ -161,14 +161,11 @@ export function LocationsWorkspace() {
     setIsReconsidering(false)
   }, [activeSceneNumber])
 
-  const [requirementsByScene, setRequirementsByScene] =
-    React.useState<
-      Record<number, SceneLocationRequirements>
-    >({})
-
   /*
-   * When Director Agent results arrive, create one independent requirements
-   * form for every scene. Changing scenes will not erase the user's input.
+   * requirementsByScene itself is now owned by production-provider.tsx
+   * (seeded there whenever directorAnalysis changes) so it survives
+   * navigating away from this page. This effect only needs to seed the
+   * locally-scoped "which scene is on screen" cursor.
    */
   React.useEffect(() => {
     if (scenes.length === 0) return
@@ -176,19 +173,6 @@ export function LocationsWorkspace() {
     setActiveSceneNumber(
       (current) => current ?? scenes[0].scene_number,
     )
-
-    setRequirementsByScene((current) => {
-      const next = { ...current }
-
-      for (const scene of scenes) {
-        if (!next[scene.scene_number]) {
-          next[scene.scene_number] =
-            createDefaultRequirements(scene)
-        }
-      }
-
-      return next
-    })
   }, [scenes])
 
   /*
@@ -200,24 +184,92 @@ export function LocationsWorkspace() {
   React.useEffect(() => {
     if (!pendingLocationBudgetOverride) return
 
-    setRequirementsByScene((current) => {
-      const next: typeof current = {}
+    for (const scene of scenes) {
+      updateSceneRequirement(
+        scene.scene_number,
+        'maximumDayRate',
+        String(Math.round(pendingLocationBudgetOverride.amount)),
+      )
+      updateSceneRequirement(
+        scene.scene_number,
+        'currency',
+        pendingLocationBudgetOverride.currency,
+      )
+    }
 
-      for (const [sceneNumber, requirements] of Object.entries(current)) {
-        next[Number(sceneNumber)] = {
-          ...requirements,
-          maximumDayRate: String(
-            Math.round(pendingLocationBudgetOverride.amount),
-          ),
-          currency: pendingLocationBudgetOverride.currency,
+    clearPendingLocationBudgetOverride()
+  }, [
+    pendingLocationBudgetOverride,
+    scenes,
+    updateSceneRequirement,
+    clearPendingLocationBudgetOverride,
+  ])
+
+  /*
+   * A budget rerun signals this by bumping autoRelocateRequestId (a
+   * hackathon-demo tradeoff: fully automatic re-search beats making the
+   * user manually re-trigger every scene). Re-search every scene
+   * sequentially — one at a time, not in parallel, to keep this simple
+   * and avoid hammering the backend — and auto-select the top match by
+   * match_score for each. Skip on the initial-mount value of 0.
+   */
+  React.useEffect(() => {
+    if (autoRelocateRequestId === 0) return
+
+    let cancelled = false
+
+    async function relocateAllScenes() {
+      setIsAutoRelocating(true)
+
+      for (let index = 0; index < scenes.length; index += 1) {
+        if (cancelled) return
+
+        const scene = scenes[index]
+        setAutoRelocateProgress({ current: index + 1, total: scenes.length })
+
+        const requirements =
+          requirementsByScene[scene.scene_number] ??
+          createDefaultRequirements(scene)
+
+        try {
+          const result = await fetchLocationsForScene(scene, requirements)
+
+          const candidates =
+            result.scene_recommendations.find(
+              (recommendation) =>
+                recommendation.scene_number === scene.scene_number,
+            )?.candidates ?? []
+
+          // The Location Agent is instructed to sort by match_score
+          // descending, but that's a prompt instruction, not a
+          // schema-enforced guarantee — sort defensively before
+          // trusting candidates[0].
+          const topCandidate = [...candidates].sort(
+            (a, b) => b.match_score - a.match_score,
+          )[0]
+
+          if (!cancelled && topCandidate) {
+            confirmLocationForScene(scene.scene_number, topCandidate)
+          }
+          // Zero candidates: leave this scene unselected and move on.
+        } catch {
+          // Search failed for this scene: skip it and continue rather
+          // than aborting the whole loop.
         }
       }
 
-      return next
-    })
+      if (!cancelled) {
+        setIsAutoRelocating(false)
+        setAutoRelocateProgress(null)
+      }
+    }
 
-    clearPendingLocationBudgetOverride()
-  }, [pendingLocationBudgetOverride, clearPendingLocationBudgetOverride])
+    void relocateAllScenes()
+
+    return () => {
+      cancelled = true
+    }
+  }, [autoRelocateRequestId])
 
   const activeScene =
     scenes.find(
@@ -257,16 +309,9 @@ export function LocationsWorkspace() {
     ) => {
       if (!activeScene) return
 
-      setRequirementsByScene((current) => ({
-        ...current,
-        [activeScene.scene_number]: {
-          ...(current[activeScene.scene_number] ??
-            createDefaultRequirements(activeScene)),
-          [key]: value,
-        },
-      }))
+      updateSceneRequirement(activeScene.scene_number, key, value)
     },
-    [activeScene],
+    [activeScene, updateSceneRequirement],
   )
 
   const selectPreviousScene = () => {
@@ -314,47 +359,13 @@ export function LocationsWorkspace() {
   const handleSearch = async () => {
     if (!activeScene || !activeRequirements) return
 
-    const requestPayload = {
-      scene: activeScene,
-      user_requirements: {
-        preferred_region:
-          activeRequirements.preferredRegion.trim(),
-
-        maximum_day_rate: Number(
-          activeRequirements.maximumDayRate,
-        ),
-
-        currency: activeRequirements.currency,
-
-        maximum_distance_km: Number(
-          activeRequirements.searchRadiusKm,
-        ),
-
-        environment: activeRequirements.environment,
-
-        permit_preference:
-          activeRequirements.permitPreference,
-
-        location_type:
-          activeRequirements.practicalOrStudio,
-
-        filming_date:
-          activeRequirements.filmingDate || null,
-
-        additional_requirements:
-          activeRequirements.additionalRequirements.trim(),
-      },
-
-      user_id: 'web_user',
-    }
-
     setIsSearching(true)
     setSearchError(null)
     setLocationResult(null)
     setSelectedLocationId(null)
 
     try {
-      const result = await searchLocations(requestPayload)
+      const result = await fetchLocationsForScene(activeScene, activeRequirements)
 
       setLocationResult(result)
 
@@ -417,6 +428,24 @@ export function LocationsWorkspace() {
             onPrevious={selectPreviousScene}
             onNext={selectNextScene}
           />
+
+          {isAutoRelocating && (
+            <Card className="border-amber/40 bg-amber/5">
+              <CardContent className="flex items-center gap-3 py-5">
+                <Loader2 className="size-4 shrink-0 animate-spin text-amber" />
+                <div>
+                  <p className="text-sm font-semibold">
+                    Re-searching locations…
+                    {autoRelocateProgress &&
+                      ` scene ${autoRelocateProgress.current} of ${autoRelocateProgress.total}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Auto-selecting the top match for every scene against the new budget.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {allScenesHaveSelectedLocation && (
             <Card className="border-primary/40 bg-primary/5">
