@@ -2,6 +2,7 @@ from google.adk.agents import LlmAgent
 from dotenv import load_dotenv
 
 from backend.app.schemas.report import ReportAgentOutput
+from backend.app.config.settings import settings
 
 load_dotenv()
 
@@ -72,7 +73,7 @@ Return only structured output matching ReportAgentOutput.
 
 report_agent = LlmAgent(
     name="report_agent",
-    model="gemini-3.5-flash",
+    model=settings.GEMINI_MODEL,
     instruction=REPORT_AGENT_INSTRUCTION,
     output_schema=ReportAgentOutput,
     output_key="report_data",

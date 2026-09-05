@@ -49,6 +49,10 @@ export function ReportWorkspace() {
     (scene) => selectedLocationsByScene[scene.scene_number],
   )
 
+  const printableRef = React.useRef<HTMLDivElement>(null)
+  const [downloadingPdf, setDownloadingPdf] = React.useState(false)
+  const [downloadError, setDownloadError] = React.useState<string | null>(null)
+
   const generatedDate = React.useMemo(
     () =>
       new Date().toLocaleDateString('en-US', {
@@ -58,6 +62,50 @@ export function ReportWorkspace() {
       }),
     [reportResult],
   )
+
+  const handleDownloadPdf = React.useCallback(async () => {
+    if (!printableRef.current) return
+
+    setDownloadingPdf(true)
+    setDownloadError(null)
+
+    try {
+      const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas-pro'),
+      ])
+
+      const canvas = await html2canvas(printableRef.current, { scale: 2 })
+      const imgData = canvas.toDataURL('image/png')
+
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+
+      const imgWidth = pageWidth
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+
+      let heightLeft = imgHeight
+      let position = 0
+
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pageHeight
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight
+        pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+        heightLeft -= pageHeight
+      }
+
+      pdf.save('cinepilot-production-report.pdf')
+    } catch (error) {
+      console.error('PDF generation failed:', error)
+      setDownloadError('Could not generate the PDF. Please try again.')
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }, [])
 
   return (
     <AnalysisGate agent="director">
@@ -104,9 +152,18 @@ export function ReportWorkspace() {
                         : 'Generate report'}
                   </Button>
                   {reportResult ? (
-                    <Button type="button" variant="outline" onClick={() => window.print()}>
-                      <Download data-icon="inline-start" />
-                      Download PDF
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={downloadingPdf}
+                      onClick={() => void handleDownloadPdf()}
+                    >
+                      {downloadingPdf ? (
+                        <Loader2 data-icon="inline-start" className="animate-spin" />
+                      ) : (
+                        <Download data-icon="inline-start" />
+                      )}
+                      {downloadingPdf ? 'Preparing PDF...' : 'Download PDF'}
                     </Button>
                   ) : null}
                 </div>
@@ -117,6 +174,12 @@ export function ReportWorkspace() {
           {reportError ? (
             <Card className="border-destructive/50 print:hidden">
               <CardContent className="pt-6 text-sm text-destructive">{reportError}</CardContent>
+            </Card>
+          ) : null}
+
+          {downloadError ? (
+            <Card className="border-destructive/50 print:hidden">
+              <CardContent className="pt-6 text-sm text-destructive">{downloadError}</CardContent>
             </Card>
           ) : null}
 
@@ -141,7 +204,7 @@ export function ReportWorkspace() {
           ) : null}
 
           {reportResult ? (
-            <div className="flex flex-col gap-6">
+            <div ref={printableRef} className="flex flex-col gap-6">
               <Card className="print:break-inside-avoid print:border-none print:shadow-none">
                 <CardHeader>
                   <div className="flex flex-wrap items-baseline justify-between gap-2">

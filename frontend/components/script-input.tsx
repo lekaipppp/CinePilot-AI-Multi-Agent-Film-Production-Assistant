@@ -12,10 +12,7 @@ import { useRouter } from 'next/navigation'
 
 async function extractPdfText(file: File): Promise<string> {
   const pdfjs = await import('pdfjs-dist')
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url,
-  ).toString()
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.mjs`
 
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjs.getDocument({ data: buffer }).promise
@@ -63,8 +60,15 @@ export function ScriptInput() {
             setFileName(file.name)
             setScriptText(trimmed.slice(0, 20000))
           })
-          .catch(() => {
-            setUploadError(`Couldn't read "${file.name}" as a PDF. Try a different file.`)
+          .catch((error) => {
+            console.error('PDF text extraction failed:', error)
+            const detail =
+              error instanceof Error && error.message.length > 0 && error.message.length <= 120
+                ? ` (${error.message})`
+                : ''
+            setUploadError(
+              `Couldn't read "${file.name}" as a PDF${detail}. Try a different file.`,
+            )
           })
           .finally(() => setExtracting(false))
         return
