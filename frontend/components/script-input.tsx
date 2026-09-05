@@ -1,15 +1,38 @@
 'use client'
 
 import * as React from 'react'
-import { FileUp, Sparkles, Wand2, X, Loader2 } from 'lucide-react'
+import { FileUp, Sparkles, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { useProduction } from '@/components/production-provider'
-import { SAMPLE_SCRIPT } from '@/lib/production-data'
 import { cn } from '@/lib/utils'
 import { useRouter } from 'next/navigation'
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjs = await import('pdfjs-dist')
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString()
+
+  const buffer = await file.arrayBuffer()
+  const pdf = await pdfjs.getDocument({ data: buffer }).promise
+
+  const pageTexts: string[] = []
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber)
+    const content = await page.getTextContent()
+    const pageText = content.items
+      .map((item) => ('str' in item ? item.str : ''))
+      .join(' ')
+      .trim()
+    if (pageText) pageTexts.push(pageText)
+  }
+
+  return pageTexts.join('\n\n')
+}
 
 export function ScriptInput() {
   const { scriptText, setScriptText, fileName, setFileName, startAnalysis, isRunning, analyzed } =
@@ -17,10 +40,36 @@ export function ScriptInput() {
   const { analysisError } = useProduction()
   const router = useRouter()
   const [dragging, setDragging] = React.useState(false)
+  const [uploadError, setUploadError] = React.useState<string | null>(null)
+  const [extracting, setExtracting] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
 
   const readFile = React.useCallback(
     (file: File) => {
+      setUploadError(null)
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')
+
+      if (isPdf) {
+        setExtracting(true)
+        extractPdfText(file)
+          .then((text) => {
+            const trimmed = text.trim()
+            if (!trimmed) {
+              setUploadError(
+                `Couldn't find any text in "${file.name}". It may be a scanned or image-only PDF — try pasting the script text directly.`,
+              )
+              return
+            }
+            setFileName(file.name)
+            setScriptText(trimmed.slice(0, 20000))
+          })
+          .catch(() => {
+            setUploadError(`Couldn't read "${file.name}" as a PDF. Try a different file.`)
+          })
+          .finally(() => setExtracting(false))
+        return
+      }
+
       setFileName(file.name)
       const reader = new FileReader()
       reader.onload = () => setScriptText(String(reader.result ?? '').slice(0, 20000))
@@ -53,17 +102,6 @@ export function ScriptInput() {
               and risk agents automatically.
             </p>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              setScriptText(SAMPLE_SCRIPT)
-              setFileName(null)
-            }}
-          >
-            <Wand2 data-icon="inline-start" />
-            Use sample script
-          </Button>
         </div>
 
         <FieldGroup>
@@ -108,7 +146,8 @@ export function ScriptInput() {
               ) : null}
             </div>
             <FieldDescription>
-              Supports .txt and .fountain screenplay files, or drag a file straight onto the editor.
+              Supports .txt, .fountain, and .pdf screenplay files, or drag a file straight onto the
+              editor.
             </FieldDescription>
           </Field>
         </FieldGroup>
@@ -117,11 +156,12 @@ export function ScriptInput() {
           <input
             ref={inputRef}
             type="file"
-            accept=".txt,.fountain,.md,text/plain"
+            accept=".txt,.fountain,.md,.pdf,text/plain,application/pdf"
             className="sr-only"
             onChange={(e) => {
               const file = e.target.files?.[0]
               if (file) readFile(file)
+              e.target.value = ''
             }}
           />
           <Button
@@ -138,9 +178,17 @@ export function ScriptInput() {
             )}
             {isRunning ? 'Running agents…' : analyzed ? 'Re-run analysis' : 'Start Analysis'}
           </Button>
-          <Button variant="outline" onClick={() => inputRef.current?.click()}>
-            <FileUp data-icon="inline-start" />
-            Upload file
+          <Button
+            variant="outline"
+            onClick={() => inputRef.current?.click()}
+            disabled={extracting}
+          >
+            {extracting ? (
+              <Loader2 data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <FileUp data-icon="inline-start" />
+            )}
+            {extracting ? 'Reading PDF…' : 'Upload file'}
           </Button>
 
           {fileName ? (
@@ -164,6 +212,11 @@ export function ScriptInput() {
             {scriptText.trim() ? `${scriptText.trim().split(/\s+/).length} words` : 'no input'}
           </span>
         </div>
+        {uploadError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {uploadError}
+          </p>
+        ) : null}
         {analysisError ? (
           <p role="alert" className="text-sm text-destructive">
             {analysisError}

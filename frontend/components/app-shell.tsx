@@ -9,6 +9,7 @@ import {
   CalendarRange,
   Wallet,
   ShieldAlert,
+  FileStack,
   RotateCcw,
 } from 'lucide-react'
 import {
@@ -45,6 +46,7 @@ const NAV_ITEMS: {
   { href: '/schedule', label: 'Schedule', phase: 'Phase 03', icon: CalendarRange, agent: 'scheduler' },
   { href: '/budget', label: 'Budget', phase: 'Phase 04', icon: Wallet, agent: 'budget' },
   { href: '/risk', label: 'Risk', phase: 'Phase 05', icon: ShieldAlert, agent: 'risk' },
+  { href: '/report', label: 'Report', phase: 'Phase 06', icon: FileStack, agent: 'report' },
 ]
 
 function StatusDot({ agent }: { agent: AgentKey }) {

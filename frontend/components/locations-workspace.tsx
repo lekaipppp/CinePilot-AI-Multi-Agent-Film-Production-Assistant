@@ -38,15 +38,18 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
-import { useProduction } from '@/components/production-provider'
-import type { DirectorScene } from '@/lib/director-api'
 import {
-  searchLocations,
-  type LocationAgentOutput,
-  type LocationCandidate,
+  useProduction,
+  type LocationSelectionStatus,
+} from '@/components/production-provider'
+import type { DirectorScene } from '@/lib/director-api'
+import type {
+  LocationAgentOutput,
+  LocationCandidate,
 } from '@/lib/location-api'
 import {
   createDefaultRequirements,
+  fetchLocationsForScene,
   type EnvironmentPreference,
   type PermitPreference,
   type SceneLocationRequirements,
@@ -89,33 +92,6 @@ function getSceneLabel(scene: DirectorScene): string {
   return `Scene ${scene.scene_number}`
 }
 
-/*
- * Shared by the manual "Find locations for Scene N" button and the
- * automatic re-search loop below — the only place the
- * LocationSearchRequest payload is built, so the two flows can never
- * drift apart.
- */
-function fetchLocationsForScene(
-  scene: DirectorScene,
-  requirements: SceneLocationRequirements,
-): Promise<LocationAgentOutput> {
-  return searchLocations({
-    scene,
-    user_requirements: {
-      preferred_region: requirements.preferredRegion.trim(),
-      maximum_day_rate: Number(requirements.maximumDayRate),
-      currency: requirements.currency,
-      maximum_distance_km: Number(requirements.searchRadiusKm),
-      environment: requirements.environment,
-      permit_preference: requirements.permitPreference,
-      location_type: requirements.practicalOrStudio,
-      filming_date: requirements.filmingDate || null,
-      additional_requirements: requirements.additionalRequirements.trim(),
-    },
-    user_id: 'web_user',
-  })
-}
-
 export function LocationsWorkspace() {
   const {
     directorAnalysis,
@@ -124,18 +100,12 @@ export function LocationsWorkspace() {
     allScenesHaveSelectedLocation,
     pendingLocationBudgetOverride,
     clearPendingLocationBudgetOverride,
-    autoRelocateRequestId,
     requirementsByScene,
     updateSceneRequirement,
+    autoRelocateProgress,
+    autoRelocateSummary,
   } = useProduction()
   const scenes = directorAnalysis?.scenes ?? []
-
-  const [isAutoRelocating, setIsAutoRelocating] = React.useState(false)
-
-  const [autoRelocateProgress, setAutoRelocateProgress] = React.useState<{
-    current: number
-    total: number
-  } | null>(null)
 
   const [isSearching, setIsSearching] = React.useState(false)
 
@@ -205,72 +175,6 @@ export function LocationsWorkspace() {
     clearPendingLocationBudgetOverride,
   ])
 
-  /*
-   * A budget rerun signals this by bumping autoRelocateRequestId (a
-   * hackathon-demo tradeoff: fully automatic re-search beats making the
-   * user manually re-trigger every scene). Re-search every scene
-   * sequentially — one at a time, not in parallel, to keep this simple
-   * and avoid hammering the backend — and auto-select the top match by
-   * match_score for each. Skip on the initial-mount value of 0.
-   */
-  React.useEffect(() => {
-    if (autoRelocateRequestId === 0) return
-
-    let cancelled = false
-
-    async function relocateAllScenes() {
-      setIsAutoRelocating(true)
-
-      for (let index = 0; index < scenes.length; index += 1) {
-        if (cancelled) return
-
-        const scene = scenes[index]
-        setAutoRelocateProgress({ current: index + 1, total: scenes.length })
-
-        const requirements =
-          requirementsByScene[scene.scene_number] ??
-          createDefaultRequirements(scene)
-
-        try {
-          const result = await fetchLocationsForScene(scene, requirements)
-
-          const candidates =
-            result.scene_recommendations.find(
-              (recommendation) =>
-                recommendation.scene_number === scene.scene_number,
-            )?.candidates ?? []
-
-          // The Location Agent is instructed to sort by match_score
-          // descending, but that's a prompt instruction, not a
-          // schema-enforced guarantee — sort defensively before
-          // trusting candidates[0].
-          const topCandidate = [...candidates].sort(
-            (a, b) => b.match_score - a.match_score,
-          )[0]
-
-          if (!cancelled && topCandidate) {
-            confirmLocationForScene(scene.scene_number, topCandidate)
-          }
-          // Zero candidates: leave this scene unselected and move on.
-        } catch {
-          // Search failed for this scene: skip it and continue rather
-          // than aborting the whole loop.
-        }
-      }
-
-      if (!cancelled) {
-        setIsAutoRelocating(false)
-        setAutoRelocateProgress(null)
-      }
-    }
-
-    void relocateAllScenes()
-
-    return () => {
-      cancelled = true
-    }
-  }, [autoRelocateRequestId])
-
   const activeScene =
     scenes.find(
       (scene) => scene.scene_number === activeSceneNumber,
@@ -339,7 +243,7 @@ export function LocationsWorkspace() {
     sceneNumber: number,
     candidate: LocationCandidate,
   ) => {
-    confirmLocationForScene(sceneNumber, candidate)
+    confirmLocationForScene(sceneNumber, candidate, 'confirmed')
     setSelectedLocationId(candidate.location_id)
 
     // Only auto-advance when the confirmed candidate belongs to the scene
@@ -429,19 +333,45 @@ export function LocationsWorkspace() {
             onNext={selectNextScene}
           />
 
-          {isAutoRelocating && (
+          {autoRelocateProgress && (
             <Card className="border-amber/40 bg-amber/5">
               <CardContent className="flex items-center gap-3 py-5">
                 <Loader2 className="size-4 shrink-0 animate-spin text-amber" />
                 <div>
                   <p className="text-sm font-semibold">
-                    Re-searching locations…
-                    {autoRelocateProgress &&
-                      ` scene ${autoRelocateProgress.current} of ${autoRelocateProgress.total}`}
+                    Re-searching locations… scene {autoRelocateProgress.current} of{' '}
+                    {autoRelocateProgress.total}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     Auto-selecting the top match for every scene against the new budget.
                   </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {autoRelocateSummary && (
+            <Card className="border-amber/40 bg-amber/5">
+              <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-amber/15 text-amber">
+                    <Sparkles className="size-4" />
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold">
+                      {autoRelocateSummary.updated} location
+                      {autoRelocateSummary.updated === 1 ? '' : 's'} updated automatically
+                      {autoRelocateSummary.needsReview > 0 &&
+                        ` — ${autoRelocateSummary.needsReview} need your review`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Your schedule was also refreshed automatically.{' '}
+                      <Link href="/schedule" className="text-primary underline">
+                        View the updated schedule
+                      </Link>
+                      .
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -487,7 +417,7 @@ export function LocationsWorkspace() {
                 selectedLocation={
                   selectedLocationsByScene[
                     activeScene.scene_number
-                  ] ?? null
+                  ]?.candidate ?? null
                 }
               />
 
@@ -569,7 +499,7 @@ export function LocationsWorkspace() {
 
               const showCollapsedView =
                 isActiveRecommendation &&
-                Boolean(confirmedCandidate) &&
+                confirmedCandidate?.status === 'confirmed' &&
                 !isReconsidering
 
               return (
@@ -585,16 +515,16 @@ export function LocationsWorkspace() {
                   {showCollapsedView && confirmedCandidate ? (
                     <div className="flex flex-col gap-3">
                       <CandidateCard
-                        candidate={confirmedCandidate}
-                        isSelected
+                        candidate={confirmedCandidate.candidate}
+                        selectionStatus={confirmedCandidate.status}
                         isMapHighlighted={
-                          confirmedCandidate.location_id ===
+                          confirmedCandidate.candidate.location_id ===
                           selectedLocationId
                         }
                         onSelect={() => {}}
                         onShowOnMap={() =>
                           setSelectedLocationId(
-                            confirmedCandidate.location_id,
+                            confirmedCandidate.candidate.location_id,
                           )
                         }
                       />
@@ -621,17 +551,24 @@ export function LocationsWorkspace() {
                           candidate.location_id ===
                           selectedLocationId
 
-                        const isSelected =
+                        const isThisCandidateSelected =
                           selectedLocationsByScene[
                             recommendation.scene_number
-                          ]?.location_id ===
+                          ]?.candidate.location_id ===
                           candidate.location_id
+
+                        const selectionStatus =
+                          isThisCandidateSelected
+                            ? selectedLocationsByScene[
+                                recommendation.scene_number
+                              ]?.status ?? null
+                            : null
 
                         return (
                           <CandidateCard
                             key={candidate.location_id}
                             candidate={candidate}
-                            isSelected={isSelected}
+                            selectionStatus={selectionStatus}
                             isMapHighlighted={
                               isMapHighlighted
                             }
@@ -646,6 +583,7 @@ export function LocationsWorkspace() {
                                 confirmLocationForScene(
                                   recommendation.scene_number,
                                   candidate,
+                                  'confirmed',
                                 )
                                 setSelectedLocationId(
                                   candidate.location_id,
@@ -690,13 +628,13 @@ export function LocationsWorkspace() {
 
 function CandidateCard({
   candidate,
-  isSelected,
+  selectionStatus,
   isMapHighlighted,
   onSelect,
   onShowOnMap,
 }: {
   candidate: LocationCandidate
-  isSelected: boolean
+  selectionStatus: LocationSelectionStatus | null
   isMapHighlighted: boolean
   onSelect: () => void
   onShowOnMap: () => void
@@ -704,20 +642,31 @@ function CandidateCard({
   return (
     <div
       className={`rounded-lg border p-4 transition-colors ${
-        isSelected
+        selectionStatus === 'confirmed'
           ? 'border-primary bg-primary/5'
-          : isMapHighlighted
-            ? 'border-amber/70 bg-amber/5'
-            : 'border-border'
+          : selectionStatus === 'auto'
+            ? 'border-amber/50 bg-amber/5'
+            : isMapHighlighted
+              ? 'border-amber/70 bg-amber/5'
+              : 'border-border'
       }`}
     >
       <div className="flex justify-between gap-4">
         <h3 className="flex items-center gap-2 font-semibold">
           {candidate.place_name}
-          {isSelected && (
+          {selectionStatus === 'confirmed' && (
             <Badge className="gap-1 border-primary/30 bg-primary text-primary-foreground">
               <Check className="size-3" />
               Selected
+            </Badge>
+          )}
+          {selectionStatus === 'auto' && (
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber/50 bg-amber/10 text-amber"
+            >
+              <Sparkles className="size-3" />
+              AI recommended · Confirm or change
             </Badge>
           )}
         </h3>
@@ -741,12 +690,12 @@ function CandidateCard({
         <Button
           type="button"
           size="sm"
-          disabled={isSelected}
+          disabled={selectionStatus === 'confirmed'}
           onClick={onSelect}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Check className="size-3.5" />
-          {isSelected
+          {selectionStatus === 'confirmed'
             ? 'Selected for this scene'
             : 'Select this location'}
         </Button>

@@ -12,6 +12,7 @@ const LOG: Record<AgentKey, string> = {
   scheduler: 'Built a 7-day board with 4 night units and 4 flagged conflicts.',
   budget: 'Costed 5 categories with a 10% weather contingency reserve.',
   risk: 'Surfaced 8 risks — 2 high severity requiring producer sign-off.',
+  report: 'Synthesized a combined report from every completed agent.',
 }
 
 export function AgentActivityFeed() {

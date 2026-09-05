@@ -1,20 +1,9 @@
 'use client'
 
-import { Check, ChevronDown, Loader2, LogOut, Settings, UserRound } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useProduction } from '@/components/production-provider'
 import { AGENT_SEQUENCE, SCRIPT_TITLE } from '@/lib/production-data'
@@ -72,45 +61,6 @@ export function TopNav() {
             )
           })}
         </div>
-
-        <Separator orientation="vertical" className="mx-1 hidden h-5 lg:block" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="ghost" className="h-9 gap-2 px-1.5 sm:pr-2.5" />}
-          >
-            <Avatar className="size-6">
-              <AvatarImage src="/avatar-producer.png" alt="" />
-              <AvatarFallback className="text-[10px]">AK</AvatarFallback>
-            </Avatar>
-            <span className="hidden text-sm sm:inline">A. Kessler</span>
-            <ChevronDown className="hidden size-3.5 opacity-60 sm:block" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span>A. Kessler</span>
-              <span className="text-xs font-normal text-muted-foreground">Line Producer</span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <UserRound />
-                Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Settings />
-                Project settings
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem variant="destructive">
-                <LogOut />
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </header>
   )

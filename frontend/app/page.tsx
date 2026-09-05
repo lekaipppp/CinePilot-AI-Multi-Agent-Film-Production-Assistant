@@ -11,7 +11,7 @@ export default function OverviewPage() {
       <PageHeader
         eyebrow="OVERVIEW"
         title="Plan an entire pre-production in one pass"
-        description="Five specialist agents read your screenplay, scout locations, build the board, cost it out, and flag every risk before you commit a single shoot day."
+        description="Six specialist agents read your screenplay, scout locations, build the board, cost it out, flag every risk, and hand you a finished report before you commit a single shoot day."
       />
 
       <ScriptInput />

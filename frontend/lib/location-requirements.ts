@@ -1,4 +1,8 @@
 import type { DirectorScene } from '@/lib/director-api'
+import {
+  searchLocations,
+  type LocationAgentOutput,
+} from '@/lib/location-api'
 
 export type EnvironmentPreference =
   | 'Interior'
@@ -42,4 +46,31 @@ export function createDefaultRequirements(
     filmingDate: '',
     additionalRequirements: '',
   }
+}
+
+/*
+ * Shared by the manual "Find locations for Scene N" button
+ * (locations-workspace.tsx) and the automatic re-search loop
+ * (production-provider.tsx) — the only place the LocationSearchRequest
+ * payload is built, so the two flows can never drift apart.
+ */
+export function fetchLocationsForScene(
+  scene: DirectorScene,
+  requirements: SceneLocationRequirements,
+): Promise<LocationAgentOutput> {
+  return searchLocations({
+    scene,
+    user_requirements: {
+      preferred_region: requirements.preferredRegion.trim(),
+      maximum_day_rate: Number(requirements.maximumDayRate),
+      currency: requirements.currency,
+      maximum_distance_km: Number(requirements.searchRadiusKm),
+      environment: requirements.environment,
+      permit_preference: requirements.permitPreference,
+      location_type: requirements.practicalOrStudio,
+      filming_date: requirements.filmingDate || null,
+      additional_requirements: requirements.additionalRequirements.trim(),
+    },
+    user_id: 'web_user',
+  })
 }

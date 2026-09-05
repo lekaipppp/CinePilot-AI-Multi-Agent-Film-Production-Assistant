@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useRouter } from 'next/navigation'
 import {
   AGENT_SEQUENCE,
   type AgentKey,
@@ -9,9 +10,12 @@ import {
 import { analyzeScreenplay, type DirectorAnalysis } from '@/lib/director-api'
 import { generateSchedule, type SchedulerAgentOutput } from '@/lib/scheduler-api'
 import { generateBudget, type BudgetAgentOutput } from '@/lib/budget-api'
+import { generateRisk, type RiskAgentOutput } from '@/lib/risk-api'
+import { generateReport, type ReportAgentOutput } from '@/lib/report-api'
 import type { LocationCandidate } from '@/lib/location-api'
 import {
   createDefaultRequirements,
+  fetchLocationsForScene,
   type SceneLocationRequirements,
 } from '@/lib/location-requirements'
 
@@ -23,6 +27,7 @@ const IDLE_AGENTS: AgentState = {
   scheduler: 'idle',
   budget: 'idle',
   risk: 'idle',
+  report: 'idle',
 }
 
 const COMPLETE_AGENTS: AgentState = {
@@ -31,6 +36,7 @@ const COMPLETE_AGENTS: AgentState = {
   scheduler: 'complete',
   budget: 'complete',
   risk: 'complete',
+  report: 'complete',
 }
 
 const DEFAULT_BUDGET_CURRENCY = 'EUR'
@@ -38,6 +44,23 @@ const DEFAULT_BUDGET_CURRENCY = 'EUR'
 type PendingLocationBudgetOverride = {
   amount: number
   currency: string
+}
+
+export type LocationSelectionStatus = 'auto' | 'confirmed'
+
+export type SelectedLocation = {
+  candidate: LocationCandidate
+  status: LocationSelectionStatus
+}
+
+type AutoRelocateProgress = {
+  current: number
+  total: number
+}
+
+type AutoRelocateSummary = {
+  updated: number
+  needsReview: number
 }
 
 type ProductionContextValue = {
@@ -51,14 +74,20 @@ type ProductionContextValue = {
   budgetError: string | null
   budgetOverrides: Record<string, number>
   budgetDirty: boolean
+  riskResult: RiskAgentOutput | null
+  riskError: string | null
+  reportResult: ReportAgentOutput | null
+  reportError: string | null
   pendingLocationBudgetOverride: PendingLocationBudgetOverride | null
   directorAnalysis: DirectorAnalysis | null
   analysisError: string | null
   scheduleResult: SchedulerAgentOutput | null
   scheduleError: string | null
-  selectedLocationsByScene: Record<number, LocationCandidate>
+  selectedLocationsByScene: Record<number, SelectedLocation>
   allScenesHaveSelectedLocation: boolean
   autoRelocateRequestId: number
+  autoRelocateProgress: AutoRelocateProgress | null
+  autoRelocateSummary: AutoRelocateSummary | null
   requirementsByScene: Record<number, SceneLocationRequirements>
   setScriptText: (value: string) => void
   setFileName: (value: string | null) => void
@@ -69,7 +98,13 @@ type ProductionContextValue = {
     currency: string,
     additionalConstraints: string,
   ) => Promise<boolean>
-  confirmLocationForScene: (sceneNumber: number, candidate: LocationCandidate) => void
+  runRisk: () => Promise<boolean>
+  runReport: () => Promise<boolean>
+  confirmLocationForScene: (
+    sceneNumber: number,
+    candidate: LocationCandidate,
+    status: LocationSelectionStatus,
+  ) => void
   clearPendingLocationBudgetOverride: () => void
   bumpAutoRelocateRequest: () => void
   updateSceneRequirement: <Key extends keyof SceneLocationRequirements>(
@@ -85,6 +120,7 @@ type ProductionContextValue = {
 const ProductionContext = React.createContext<ProductionContextValue | null>(null)
 
 export function ProductionProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter()
   const [analyzed, setAnalyzed] = React.useState(false)
   const [agents, setAgents] = React.useState<AgentState>(IDLE_AGENTS)
   const [scriptText, setScriptText] = React.useState('')
@@ -93,11 +129,19 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [budgetError, setBudgetError] = React.useState<string | null>(null)
   const [budgetOverrides, setBudgetOverrides] = React.useState<Record<string, number>>({})
   const [budgetDirty, setBudgetDirty] = React.useState(false)
+  const [riskResult, setRiskResult] = React.useState<RiskAgentOutput | null>(null)
+  const [riskError, setRiskError] = React.useState<string | null>(null)
+  const [reportResult, setReportResult] = React.useState<ReportAgentOutput | null>(null)
+  const [reportError, setReportError] = React.useState<string | null>(null)
   const [budgetCurrency, setBudgetCurrency] = React.useState(DEFAULT_BUDGET_CURRENCY)
   const [budgetAdditionalConstraints, setBudgetAdditionalConstraints] = React.useState('')
   const [pendingLocationBudgetOverride, setPendingLocationBudgetOverride] =
     React.useState<PendingLocationBudgetOverride | null>(null)
   const [autoRelocateRequestId, setAutoRelocateRequestId] = React.useState(0)
+  const [autoRelocateProgress, setAutoRelocateProgress] =
+    React.useState<AutoRelocateProgress | null>(null)
+  const [autoRelocateSummary, setAutoRelocateSummary] =
+    React.useState<AutoRelocateSummary | null>(null)
   const [directorAnalysis, setDirectorAnalysis] = React.useState<DirectorAnalysis | null>(null)
   const [analysisError, setAnalysisError] = React.useState<string | null>(null)
   const [scheduleResult, setScheduleResult] = React.useState<SchedulerAgentOutput | null>(null)
@@ -105,7 +149,7 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const [lastScheduleTargetDays, setLastScheduleTargetDays] = React.useState<number | null>(null)
   const [lastScheduleConstraints, setLastScheduleConstraints] = React.useState<string | null>(null)
   const [selectedLocationsByScene, setSelectedLocationsByScene] = React.useState<
-    Record<number, LocationCandidate>
+    Record<number, SelectedLocation>
   >({})
   const [requirementsByScene, setRequirementsByScene] = React.useState<
     Record<number, SceneLocationRequirements>
@@ -202,7 +246,9 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
       try {
         const result = await generateBudget({
           scenes: directorAnalysis.scenes,
-          selected_locations: Object.values(selectedLocationsByScene),
+          selected_locations: Object.values(selectedLocationsByScene).map(
+            (entry) => entry.candidate,
+          ),
           total_shoot_days: scheduleResult?.total_shoot_days ?? null,
           constraints: {
             target_budget: targetBudget,
@@ -231,11 +277,76 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     [directorAnalysis, selectedLocationsByScene, scheduleResult],
   )
 
+  const runRisk = React.useCallback(async () => {
+    if (!directorAnalysis || directorAnalysis.scenes.length === 0) {
+      setRiskError('Run Director analysis before generating a risk assessment.')
+      return false
+    }
+
+    setAgents((previous) => ({ ...previous, risk: 'running' }))
+    setRiskError(null)
+
+    try {
+      const result = await generateRisk({
+        scenes: directorAnalysis.scenes,
+        selected_locations: Object.values(selectedLocationsByScene).map(
+          (entry) => entry.candidate,
+        ),
+        schedule: scheduleResult,
+        budget: budgetResult,
+        user_id: 'web_user',
+      })
+
+      setRiskResult(result)
+      setAgents((previous) => ({ ...previous, risk: 'complete' }))
+      return true
+    } catch (error) {
+      setAgents((previous) => ({ ...previous, risk: 'idle' }))
+      setRiskError(error instanceof Error ? error.message : 'Risk Agent failed.')
+      return false
+    }
+  }, [directorAnalysis, selectedLocationsByScene, scheduleResult, budgetResult])
+
+  const runReport = React.useCallback(async () => {
+    if (!directorAnalysis || directorAnalysis.scenes.length === 0) {
+      setReportError('Run Director analysis before generating a report.')
+      return false
+    }
+
+    setAgents((previous) => ({ ...previous, report: 'running' }))
+    setReportError(null)
+
+    try {
+      const result = await generateReport({
+        scenes: directorAnalysis.scenes,
+        selected_locations: Object.values(selectedLocationsByScene).map(
+          (entry) => entry.candidate,
+        ),
+        schedule: scheduleResult,
+        budget: budgetResult,
+        risk: riskResult,
+        user_id: 'web_user',
+      })
+
+      setReportResult(result)
+      setAgents((previous) => ({ ...previous, report: 'complete' }))
+      return true
+    } catch (error) {
+      setAgents((previous) => ({ ...previous, report: 'idle' }))
+      setReportError(error instanceof Error ? error.message : 'Report Agent failed.')
+      return false
+    }
+  }, [directorAnalysis, selectedLocationsByScene, scheduleResult, budgetResult, riskResult])
+
   const confirmLocationForScene = React.useCallback(
-    (sceneNumber: number, candidate: LocationCandidate) => {
+    (
+      sceneNumber: number,
+      candidate: LocationCandidate,
+      status: LocationSelectionStatus,
+    ) => {
       setSelectedLocationsByScene((previous) => ({
         ...previous,
-        [sceneNumber]: candidate,
+        [sceneNumber]: { candidate, status },
       }))
     },
     [],
@@ -261,6 +372,80 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
   const bumpAutoRelocateRequest = React.useCallback(() => {
     setAutoRelocateRequestId((previous) => previous + 1)
   }, [])
+
+  /*
+   * Lives here (not in locations-workspace.tsx) so a budget-triggered
+   * rerun keeps re-searching every scene even if the user navigates away
+   * from /locations mid-loop — this provider never unmounts on route
+   * changes, so the loop just keeps running in the background and
+   * whichever page is on screen reflects progress reactively.
+   */
+  React.useEffect(() => {
+    if (autoRelocateRequestId === 0) return
+
+    let cancelled = false
+
+    async function relocateAllScenes() {
+      const scenes = directorAnalysis?.scenes ?? []
+      let updatedCount = 0
+      let needsReviewCount = 0
+
+      for (let index = 0; index < scenes.length; index += 1) {
+        if (cancelled) return
+
+        const scene = scenes[index]
+        setAutoRelocateProgress({ current: index + 1, total: scenes.length })
+
+        const requirements =
+          requirementsByScene[scene.scene_number] ?? createDefaultRequirements(scene)
+
+        try {
+          const result = await fetchLocationsForScene(scene, requirements)
+
+          const candidates =
+            result.scene_recommendations.find(
+              (recommendation) => recommendation.scene_number === scene.scene_number,
+            )?.candidates ?? []
+
+          // The Location Agent is instructed to sort by match_score
+          // descending, but that's a prompt instruction, not a
+          // schema-enforced guarantee — sort defensively before
+          // trusting candidates[0].
+          const topCandidate = [...candidates].sort(
+            (a, b) => b.match_score - a.match_score,
+          )[0]
+
+          if (cancelled) return
+
+          if (topCandidate) {
+            confirmLocationForScene(scene.scene_number, topCandidate, 'auto')
+            updatedCount += 1
+            needsReviewCount += 1
+          } else {
+            // Zero candidates: leave this scene unselected and count it
+            // toward "needs review" — nothing to auto-pick, but it's
+            // still not settled.
+            needsReviewCount += 1
+          }
+        } catch {
+          // Search failed for this scene: skip it, count it toward
+          // "needs review", and continue rather than aborting the loop.
+          needsReviewCount += 1
+        }
+      }
+
+      if (!cancelled) {
+        setAutoRelocateProgress(null)
+        setAutoRelocateSummary({ updated: updatedCount, needsReview: needsReviewCount })
+      }
+    }
+
+    void relocateAllScenes()
+
+    return () => {
+      cancelled = true
+    }
+  }, [autoRelocateRequestId])
 
   const updateSceneRequirement = React.useCallback(
     <Key extends keyof SceneLocationRequirements>(
@@ -294,10 +479,16 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setBudgetError(null)
     setBudgetOverrides({})
     setBudgetDirty(false)
+    setRiskResult(null)
+    setRiskError(null)
+    setReportResult(null)
+    setReportError(null)
     setBudgetCurrency(DEFAULT_BUDGET_CURRENCY)
     setBudgetAdditionalConstraints('')
     setPendingLocationBudgetOverride(null)
     setAutoRelocateRequestId(0)
+    setAutoRelocateProgress(null)
+    setAutoRelocateSummary(null)
     setDirectorAnalysis(null)
     setAnalysisError(null)
     setScheduleResult(null)
@@ -344,6 +535,7 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     setScheduleResult(null)
     setScheduleError(null)
     setSelectedLocationsByScene({})
+    setAutoRelocateSummary(null)
 
     const newTargetBudget = budgetResult.line_items.reduce(
       (sum, item) => sum + effectiveAmount(item.key, item.estimated_amount),
@@ -367,6 +559,14 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     }
 
     bumpAutoRelocateRequest()
+
+    // Send the user to Locations so they watch the re-search happen —
+    // this is the one step in the cascade that produces results worth a
+    // human glance. The loop itself (above) doesn't depend on this
+    // navigation; it keeps running in the provider regardless of which
+    // page is mounted, so this is purely about vantage point, not a
+    // requirement for the loop to work.
+    router.push('/locations')
   }, [
     budgetResult,
     budgetOverrides,
@@ -374,6 +574,7 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     directorAnalysis,
     lastScheduleTargetDays,
     lastScheduleConstraints,
+    router,
     runBudget,
     runScheduler,
     bumpAutoRelocateRequest,
@@ -395,6 +596,10 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     budgetError,
     budgetOverrides,
     budgetDirty,
+    riskResult,
+    riskError,
+    reportResult,
+    reportError,
     pendingLocationBudgetOverride,
     directorAnalysis,
     analysisError,
@@ -403,12 +608,16 @@ export function ProductionProvider({ children }: { children: React.ReactNode }) 
     selectedLocationsByScene,
     allScenesHaveSelectedLocation,
     autoRelocateRequestId,
+    autoRelocateProgress,
+    autoRelocateSummary,
     requirementsByScene,
     setScriptText,
     setFileName,
     startAnalysis,
     runScheduler,
     runBudget,
+    runRisk,
+    runReport,
     confirmLocationForScene,
     clearPendingLocationBudgetOverride,
     bumpAutoRelocateRequest,

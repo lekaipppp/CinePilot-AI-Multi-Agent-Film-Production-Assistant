@@ -1,4 +1,4 @@
-export type AgentKey = 'director' | 'location' | 'scheduler' | 'budget' | 'risk'
+export type AgentKey = 'director' | 'location' | 'scheduler' | 'budget' | 'risk' | 'report'
 export type AgentStatus = 'idle' | 'running' | 'complete'
 
 export const AGENT_SEQUENCE: { key: AgentKey; label: string; short: string }[] = [
@@ -7,6 +7,7 @@ export const AGENT_SEQUENCE: { key: AgentKey; label: string; short: string }[] =
   { key: 'scheduler', label: 'Scheduler Agent', short: 'Scheduler' },
   { key: 'budget', label: 'Budget Agent', short: 'Budget' },
   { key: 'risk', label: 'Risk Agent', short: 'Risk' },
+  { key: 'report', label: 'Report Agent', short: 'Report' },
 ]
 
 export type Scene = {
