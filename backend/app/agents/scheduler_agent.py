@@ -1,6 +1,7 @@
 from google.adk.agents import LlmAgent
 from dotenv import load_dotenv
 
+from backend.app.config.settings import settings
 from backend.app.schemas.scheduler import SchedulerAgentOutput
 
 load_dotenv()
@@ -156,7 +157,7 @@ Return only structured output matching SchedulerAgentOutput.
 
 scheduler_agent = LlmAgent(
     name="scheduler_agent",
-    model="gemini-3.5-flash",
+    model=settings.GEMINI_MODEL,
     instruction=SCHEDULER_AGENT_INSTRUCTION,
     output_schema=SchedulerAgentOutput,
     output_key="schedule_data",

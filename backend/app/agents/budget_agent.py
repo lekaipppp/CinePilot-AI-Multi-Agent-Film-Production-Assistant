@@ -1,6 +1,7 @@
 from google.adk.agents import LlmAgent
 from dotenv import load_dotenv
 
+from backend.app.config.settings import settings
 from backend.app.schemas.budget import BudgetAgentOutput
 
 load_dotenv()
@@ -108,7 +109,7 @@ Return only structured output matching BudgetAgentOutput.
 
 budget_agent = LlmAgent(
     name="budget_agent",
-    model="gemini-3.5-flash",
+    model=settings.GEMINI_MODEL,
     instruction=BUDGET_AGENT_INSTRUCTION,
     output_schema=BudgetAgentOutput,
     output_key="budget_data",

@@ -11,6 +11,8 @@ from typing import List, Optional, Literal
 from google.adk.agents import LlmAgent
 from dotenv import load_dotenv
 
+from backend.app.config.settings import settings
+
 
 '''
 1. V2: Add a critique agent to review the extracted data.
@@ -169,7 +171,7 @@ Return structured output matching the required schema.
 
 director_agent = LlmAgent(
     name="director_agent",
-    model="gemini-3.5-flash-lite",
+    model=settings.GEMINI_MODEL,
     instruction=EXTRACTION_INSTRUCTION,
     output_schema=ScriptRubric,
     output_key="extracted_data",

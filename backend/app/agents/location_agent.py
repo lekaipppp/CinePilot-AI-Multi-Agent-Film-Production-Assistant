@@ -3,6 +3,8 @@ from typing import List, Literal, Optional
 from google.adk.agents import LlmAgent
 from pydantic import BaseModel, Field, HttpUrl
 
+from backend.app.config.settings import settings
+
 
 class LocationCandidateSchema(BaseModel):
     location_id: str = Field(
@@ -512,7 +514,7 @@ Return only structured output matching LocationAgentOutput.
 
 location_agent = LlmAgent(
     name="location_agent",
-    model="gemini-3.5-flash",
+    model=settings.GEMINI_MODEL,
     instruction=LOCATION_AGENT_INSTRUCTION,
     output_schema=LocationAgentOutput,
     output_key="location_data",

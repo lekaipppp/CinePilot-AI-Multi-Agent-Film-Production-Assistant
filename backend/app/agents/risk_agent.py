@@ -1,6 +1,7 @@
 from google.adk.agents import LlmAgent
 from dotenv import load_dotenv
 
+from backend.app.config.settings import settings
 from backend.app.schemas.risk import RiskAgentOutput
 
 load_dotenv()
@@ -117,7 +118,7 @@ Return only structured output matching RiskAgentOutput.
 
 risk_agent = LlmAgent(
     name="risk_agent",
-    model="gemini-3.5-flash",
+    model=settings.GEMINI_MODEL,
     instruction=RISK_AGENT_INSTRUCTION,
     output_schema=RiskAgentOutput,
     output_key="risk_data",
