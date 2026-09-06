@@ -19,7 +19,8 @@ app.add_middleware(
     #allow_origins defines an allowlist of domain origins that are granted permission to make cross-origin API requests
     allow_origins= [
         "http://localhost:3000",
-        "http://127.0.0.1:3000",    
+        "http://127.0.0.1:3000",
+        "https://cine-pilot-ai-multi-agent-film-prod.vercel.app",    
     ],
     allow_credentials=True,
     allow_methods=["*"],
