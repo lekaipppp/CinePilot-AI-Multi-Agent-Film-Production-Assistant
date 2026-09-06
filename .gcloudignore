@@ -1,10 +1,8 @@
-﻿.env
-.venv/
+.git/
 venv/
 __pycache__/
 *.pyc
-
+frontend/
 node_modules/
-.next/
-dist/
-.DS_Store
+.env
+*.egg-info/
